@@ -1,0 +1,273 @@
+from flask import Flask, render_template, request, jsonify, session
+from src.helper import download_hugging_face_embeddings
+from langchain_pinecone import PineconeVectorStore
+from langchain_groq import ChatGroq
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_community.chat_message_histories import ChatMessageHistory
+from langchain_core.chat_history import BaseChatMessageHistory
+from dotenv import load_dotenv
+from flask_cors import CORS
+import os
+import re
+from datetime import datetime
+
+
+def format_response(text):
+    """Format the bot response for better readability"""
+    # Remove ** from bold text
+    text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
+    
+    # Convert numbered points into separate lines
+    text = re.sub(r"(\d+\.)", r"<br>\1", text)  
+    
+    # Bold headings
+    text = re.sub(r"(\d+\.\s)(.*?):", r"\1<b>\2</b>:", text)  
+    
+    # Ensure newlines are converted to <br> tags
+    text = text.replace("\n", "<br>")
+    
+    return text.strip()
+
+
+# Load environment variables
+load_dotenv()
+
+# Retrieve API keys
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+# Ensure API keys are set
+if not PINECONE_API_KEY:
+    raise ValueError("Missing PINECONE_API_KEY. Please set it in your .env file.")
+if not GROQ_API_KEY:
+    raise ValueError("Missing GROQ_API_KEY. Please set it in your .env file.")
+
+os.environ["PINECONE_API_KEY"] = PINECONE_API_KEY
+
+# Initialize Flask app
+app = Flask(__name__)
+app.secret_key = os.urandom(24)  # For session management
+CORS(app, supports_credentials=True)
+
+# Store chat histories in memory (per session)
+chat_histories = {}
+
+def get_session_history(session_id: str) -> BaseChatMessageHistory:
+    """Get or create chat history for a session"""
+    if session_id not in chat_histories:
+        chat_histories[session_id] = ChatMessageHistory()
+    return chat_histories[session_id]
+
+
+# Load embeddings
+print("🤖 Loading embeddings model...")
+embeddings = download_hugging_face_embeddings()
+print("✅ Embeddings loaded")
+
+index_name = "lawbot2"
+
+# Connect to the existing Pinecone index
+print("🔌 Connecting to Pinecone...")
+docsearch = PineconeVectorStore.from_existing_index(
+    index_name=index_name,
+    embedding=embeddings
+)
+print("✅ Connected to Pinecone")
+
+retriever = docsearch.as_retriever(search_type="similarity", search_kwargs={"k": 3})
+
+# Initialize LLM model
+print("🧠 Initializing Groq LLM...")
+llm = ChatGroq(
+    groq_api_key=GROQ_API_KEY,
+    model_name="llama-3.3-70b-versatile",
+    temperature=0.3
+)
+print("✅ LLM initialized")
+
+# Custom system prompt
+system_prompt = """You're LawBot, a friendly AI helping people understand Indian legal cases in simple, modern English. 
+Speak clearly, be helpful, and sound like you're chatting with a friend—not a courtroom judge.
+
+System Role:
+You are LawBot, a helpful and friendly AI that explains Indian legal issues in simple, modern English. You are not a lawyer and cannot give legal advice. Your job is to help users understand their situation better, not solve legal cases.
+
+How You Help:
+- Ask follow-up questions to understand the complete situation
+- Explain Indian laws and legal terms in easy language
+- Share possible outcomes based on common legal practice in India
+- Suggest practical steps the user can take
+- Use only real Indian laws and cases from trusted sources like Indian Kanoon, SCC Online, Casemine, or official court websites
+
+Tone and Language:
+- Be friendly, supportive, and respectful
+- Speak like you're talking to a friend, not like a judge or legal textbook
+- Use everyday language. If you use any legal terms, explain them simply
+
+Important Rules:
+- Never give direct legal advice
+- Never guess, make up, or fake laws or outcomes
+- Only refer to verified Indian laws and cases
+- Keep your replies neutral and cautious
+- Always suggest speaking to a real lawyer for legal action
+
+Context from legal documents:
+{context}
+
+Chat History:
+{chat_history}
+
+User Question: {question}
+
+Your Response:"""
+
+# Create prompt template
+prompt = ChatPromptTemplate.from_template(system_prompt)
+
+
+def get_context_from_retriever(question):
+    """Retrieve relevant context from Pinecone"""
+    try:
+        docs = retriever.invoke(question)
+        context = "\n\n".join([doc.page_content for doc in docs])
+        return context
+    except Exception as e:
+        print(f"❌ Error retrieving context: {str(e)}")
+        return ""
+
+
+def format_chat_history(messages):
+    """Format chat history for the prompt"""
+    formatted = []
+    for msg in messages:
+        if hasattr(msg, 'type'):
+            role = "Human" if msg.type == "human" else "AI"
+            formatted.append(f"{role}: {msg.content}")
+    return "\n".join(formatted[-6:])  # Keep last 6 messages (3 exchanges)
+
+
+print("✅ Chat system ready!")
+
+
+# Routes
+@app.route("/chat")
+def index():
+    """Render chat interface"""
+    # Create a new session ID if not exists
+    if 'session_id' not in session:
+        session['session_id'] = str(datetime.now().timestamp())
+    return render_template('chat.html')
+
+
+@app.route("/get", methods=["POST"])
+def chat():
+    """Handle chat messages"""
+    data = request.json
+    msg = data.get("msg", "").strip()
+
+    if not msg:
+        return jsonify({"error": "No input received."}), 400
+
+    # Get or create session ID
+    session_id = session.get('session_id', str(datetime.now().timestamp()))
+    session['session_id'] = session_id
+
+    try:
+        # Get chat history for this session
+        history = get_session_history(session_id)
+        
+        # Get relevant context from Pinecone
+        context = get_context_from_retriever(msg)
+        
+        # Format chat history
+        chat_history_text = format_chat_history(history.messages)
+        
+        # Create the prompt
+        formatted_prompt = prompt.format(
+            context=context,
+            chat_history=chat_history_text,
+            question=msg
+        )
+        
+        # Get response from LLM
+        response = llm.invoke(formatted_prompt)
+        bot_answer = response.content
+        
+        # Add to chat history
+        history.add_user_message(msg)
+        history.add_ai_message(bot_answer)
+        
+        # Format response for display
+        formatted_response = bot_answer.replace("\n", "<br>")
+
+        return jsonify({"response": formatted_response})
+    
+    except Exception as e:
+        print(f"❌ Error processing request: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": "Failed to process request. Please try again."}), 500
+
+
+@app.route("/chat_history", methods=["GET"])
+def chat_history():
+    """Retrieve conversation history"""
+    try:
+        session_id = session.get('session_id')
+        if not session_id:
+            return jsonify({"history": []})
+        
+        history = get_session_history(session_id)
+        
+        # Format messages
+        messages = []
+        for msg in history.messages:
+            messages.append({
+                "type": msg.type,
+                "content": msg.content
+            })
+        
+        return jsonify({"history": messages})
+    
+    except Exception as e:
+        print(f"❌ Error retrieving history: {str(e)}")
+        return jsonify({"error": "Failed to retrieve chat history"}), 500
+
+
+@app.route("/chat/clear", methods=["POST"])
+def clear_chat():
+    """Clear chat history for current session"""
+    try:
+        session_id = session.get('session_id')
+        if session_id and session_id in chat_histories:
+            del chat_histories[session_id]
+            session['session_id'] = str(datetime.now().timestamp())
+        
+        return jsonify({"message": "Chat history cleared"})
+    
+    except Exception as e:
+        print(f"❌ Error clearing history: {str(e)}")
+        return jsonify({"error": "Failed to clear history"}), 500
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    """Health check endpoint"""
+    return jsonify({
+        "status": "OK",
+        "message": "LawBot chatbot service is running",
+        "model": "llama-3.3-70b-versatile",
+        "index": index_name,
+        "active_sessions": len(chat_histories)
+    })
+
+
+if __name__ == '__main__':
+    print("\n🚀 Starting LawBot Flask server...")
+    print("📍 Server URL: http://localhost:8080")
+    print("💬 Chat interface: http://localhost:8080/chat")
+    print("📊 Health check: http://localhost:8080/health")
+    print("\n✨ Ready to help with legal queries!\n")
+    
+    app.run(host="0.0.0.0", port=8080, debug=True)
