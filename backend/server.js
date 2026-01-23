@@ -21,6 +21,9 @@ const app = express()
 const httpServer = createServer(app)
 const PORT = process.env.PORT || 5000
 
+// Trust proxy for Render deployment (required for rate limiting behind reverse proxy)
+app.set('trust proxy', 1)
+
 // Initialize Socket.io for WebRTC signaling
 const io = new Server(httpServer, {
   cors: {
@@ -39,7 +42,8 @@ const limiter = rateLimit({
   max: 1000, // limit each IP to 1000 requests per windowMs (increased for development)
   message: { error: 'Too many requests from this IP, please try again later.' },
   standardHeaders: true,
-  legacyHeaders: false
+  legacyHeaders: false,
+  validate: { xForwardedForHeader: false } // Disable validation since we trust the proxy
 })
 
 // CORS Configuration - must be before other middleware
