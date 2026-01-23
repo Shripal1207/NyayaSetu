@@ -1,16 +1,24 @@
 from flask import Flask, render_template, request, jsonify, session
-from src.helper import download_hugging_face_embeddings
 from langchain_pinecone import PineconeVectorStore
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_core.chat_history import BaseChatMessageHistory
+from langchain_huggingface import HuggingFaceEmbeddings
 from dotenv import load_dotenv
 from flask_cors import CORS
 import os
 import re
 from datetime import datetime
+
+
+def download_hugging_face_embeddings():
+    """Download and initialize HuggingFace embeddings model"""
+    embeddings = HuggingFaceEmbeddings(
+        model_name='sentence-transformers/all-MiniLM-L6-v2'
+    )
+    return embeddings
 
 
 def format_response(text):
@@ -61,30 +69,30 @@ def get_session_history(session_id: str) -> BaseChatMessageHistory:
 
 
 # Load embeddings
-print("🤖 Loading embeddings model...")
+print("[BOT] Loading embeddings model...")
 embeddings = download_hugging_face_embeddings()
-print("✅ Embeddings loaded")
+print("[OK] Embeddings loaded")
 
 index_name = "lawbot2"
 
 # Connect to the existing Pinecone index
-print("🔌 Connecting to Pinecone...")
+print("[CONNECT] Connecting to Pinecone...")
 docsearch = PineconeVectorStore.from_existing_index(
     index_name=index_name,
     embedding=embeddings
 )
-print("✅ Connected to Pinecone")
+print("[OK] Connected to Pinecone")
 
 retriever = docsearch.as_retriever(search_type="similarity", search_kwargs={"k": 3})
 
 # Initialize LLM model
-print("🧠 Initializing Groq LLM...")
+print("[BRAIN] Initializing Groq LLM...")
 llm = ChatGroq(
     groq_api_key=GROQ_API_KEY,
     model_name="llama-3.3-70b-versatile",
     temperature=0.3
 )
-print("✅ LLM initialized")
+print("[OK] LLM initialized")
 
 # Custom system prompt
 system_prompt = """You're LawBot, a friendly AI helping people understand Indian legal cases in simple, modern English. 
@@ -133,7 +141,7 @@ def get_context_from_retriever(question):
         context = "\n\n".join([doc.page_content for doc in docs])
         return context
     except Exception as e:
-        print(f"❌ Error retrieving context: {str(e)}")
+        print(f"[ERROR] Error retrieving context: {str(e)}")
         return ""
 
 
@@ -147,7 +155,7 @@ def format_chat_history(messages):
     return "\n".join(formatted[-6:])  # Keep last 6 messages (3 exchanges)
 
 
-print("✅ Chat system ready!")
+print("[OK] Chat system ready!")
 
 
 # Routes
@@ -247,7 +255,7 @@ def clear_chat():
         return jsonify({"message": "Chat history cleared"})
     
     except Exception as e:
-        print(f"❌ Error clearing history: {str(e)}")
+        print(f"[ERROR] Error clearing history: {str(e)}")
         return jsonify({"error": "Failed to clear history"}), 500
 
 
@@ -264,10 +272,11 @@ def health():
 
 
 if __name__ == '__main__':
-    print("\n🚀 Starting LawBot Flask server...")
-    print("📍 Server URL: http://localhost:8080")
-    print("💬 Chat interface: http://localhost:8080/chat")
-    print("📊 Health check: http://localhost:8080/health")
-    print("\n✨ Ready to help with legal queries!\n")
+    port = int(os.environ.get("PORT", 7860))
+    print("\n[START] Starting LawBot Flask server...")
+    print(f"[URL] Server URL: http://localhost:{port}")
+    print(f"[CHAT] Chat interface: http://localhost:{port}/chat")
+    print(f"[HEALTH] Health check: http://localhost:{port}/health")
+    print("\n[READY] Ready to help with legal queries!\n")
     
-    app.run(host="0.0.0.0", port=8080, debug=True)
+    app.run(host="0.0.0.0", port=port, debug=False)

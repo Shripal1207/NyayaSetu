@@ -33,7 +33,7 @@ genai.configure(api_key=GOOGLE_API_KEY)
 VECTOR_STORE_PATH = "faiss_index"
 TEXT_FILE_PATH = "uploaded_text.txt"
 
-print("✅ Document Analyzer initialized with local embeddings")
+print("[OK] Document Analyzer initialized with local embeddings")
 
 
 def get_pdf_text(pdf_docs):
@@ -47,7 +47,7 @@ def get_pdf_text(pdf_docs):
                 if extracted:
                     text += extracted
         except Exception as e:
-            print(f"❌ Error reading PDF: {str(e)}")
+            print(f"[ERROR] Error reading PDF: {str(e)}")
     return text.strip()
 
 
@@ -67,13 +67,13 @@ def get_vector_store(text_chunks):
         embeddings = HuggingFaceEmbeddings(
             model_name='sentence-transformers/all-MiniLM-L6-v2'
         )
-        print("✅ Embeddings model loaded")
+        print("[OK] Embeddings model loaded")
         
         vector_store = FAISS.from_texts(text_chunks, embedding=embeddings)
         vector_store.save_local(VECTOR_STORE_PATH)
-        print("✅ Vector store created successfully")
+        print("[OK] Vector store created successfully")
     except Exception as e:
-        print(f"❌ Error creating vector store: {str(e)}")
+        print(f"[ERROR] Error creating vector store: {str(e)}")
         raise
 
 
@@ -104,14 +104,14 @@ Explanation:"""
         response = model.generate_content(prompt)
         
         if response.text:
-            print("✅ Explanation generated successfully")
+            print("[OK] Explanation generated successfully")
             return response.text
         else:
-            print("❌ No response from API")
+            print("[ERROR] No response from API")
             return "Could not generate explanation. Please try again."
             
     except Exception as e:
-        print(f"❌ Error generating explanation: {str(e)}")
+        print(f"[ERROR] Error generating explanation: {str(e)}")
         return f"Error: {str(e)[:100]}. Please check your API key and quota."
 
 
@@ -147,13 +147,13 @@ Your Answer (in {language}):"""
         response = model.generate_content(formatted_prompt)
         
         if response.text:
-            print("✅ Response generated successfully")
+            print("[OK] Response generated successfully")
             return response.text
         else:
             return "Could not generate response. Please try again."
             
     except Exception as e:
-        print(f"❌ Error generating response: {str(e)}")
+        print(f"[ERROR] Error generating response: {str(e)}")
         return f"Error: {str(e)[:100]}"
 
 
@@ -175,15 +175,15 @@ def answer_question(user_question, language="English"):
             allow_dangerous_deserialization=True
         )
         
-        print(f"🔍 Retrieving documents for: {user_question[:50]}...")
+        print(f"[SEARCH] Retrieving documents for: {user_question[:50]}...")
         docs = new_db.similarity_search(user_question, k=3)
 
         if not docs:
             context_string = "No relevant context found."
-            print("⚠️ No relevant documents found in vector store.")
+            print("[WARN] No relevant documents found in vector store.")
         else:
             context_string = "\n\n".join([doc.page_content for doc in docs])
-            print(f"✅ Found {len(docs)} relevant documents")
+            print(f"[OK] Found {len(docs)} relevant documents")
 
         # Get response from Gemini with language
         response = get_conversational_response(context_string, user_question, language)
@@ -191,7 +191,7 @@ def answer_question(user_question, language="English"):
         return response
     
     except Exception as e:
-        print(f"❌ Error answering question: {str(e)}")
+        print(f"[ERROR] Error answering question: {str(e)}")
         return f"Error processing question: {str(e)}"
 
 
@@ -309,11 +309,11 @@ def index():
             "GET /": "This info"
         },
         "features": [
-            "✅ FREE embeddings (no API costs)",
-            "✅ FREE Gemini API",
-            "✅ Multi-language support",
-            "✅ Local vector storage",
-            "✅ No quota limits for embeddings"
+            "[OK] FREE embeddings (no API costs)",
+            "[OK] FREE Gemini API",
+            "[OK] Multi-language support",
+            "[OK] Local vector storage",
+            "[OK] No quota limits for embeddings"
         ]
     }), 200
 
@@ -322,9 +322,10 @@ if __name__ == "__main__":
     print("\n" + "="*50)
     print("- Starting Document Analyzer Service")
     print("="*50)
-    print(" Server URL: http://localhost:8000")
-    print(" Health check: http://localhost:8000/health")
-    print(" API info: http://localhost:8000/")
+    port = int(os.environ.get("PORT", 7860))
+    print(f" Server URL: http://localhost:{port}")
+    print(f" Health check: http://localhost:{port}/health")
+    print(f" API info: http://localhost:{port}/")
     print("\n Ready to analyze legal documents!\n")
     
-    app.run(host="0.0.0.0", port=8000, debug=True)
+    app.run(host="0.0.0.0", port=port, debug=False)
