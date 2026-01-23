@@ -12,7 +12,13 @@ import time
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app)
+
+# CORS Configuration - Allow frontend origins
+CORS(app, 
+     origins=["https://legal-nexus-pi.vercel.app", "http://localhost:5100", "http://localhost:5173"],
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+     allow_headers=["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
+     supports_credentials=True)
 
 # Load environment variables
 load_dotenv()
