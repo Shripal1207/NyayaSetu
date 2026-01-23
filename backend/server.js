@@ -42,13 +42,37 @@ const limiter = rateLimit({
   legacyHeaders: false
 })
 
-// Middleware
-app.use(helmet())
-app.use(morgan('dev'))
-app.use(cors({
-  origin: process.env.ALLOWED_ORIGINS?.split(',') || '*',
-  credentials: true
+// CORS Configuration - must be before other middleware
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
+  : ['*']
+
+console.log('🔒 CORS Allowed Origins:', allowedOrigins)
+
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests with no origin (mobile apps, curl, etc)
+    if (!origin) return callback(null, true)
+
+    if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+      callback(null, true)
+    } else {
+      console.log('❌ CORS blocked origin:', origin)
+      callback(new Error('Not allowed by CORS'))
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin']
+}
+
+// Middleware - CORS must be first
+app.use(cors(corsOptions))
+app.options('*', cors(corsOptions)) // Enable preflight for all routes
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
 }))
+app.use(morgan('dev'))
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 app.use('/api/', limiter)
