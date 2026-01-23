@@ -59,23 +59,25 @@ const ChatbotPage = () => {
         id: Date.now() + 1,
         text: response.response || response.answer || 'Sorry, I could not generate a response.',
         sender: 'bot',
-        timestamp: new Date()
+        timestamp: new Date(),
+        isError: response.error || false,
+        serviceUnavailable: response.serviceUnavailable || false
       }
 
       setMessages(prev => [...prev, botMessage])
+
+      // Only show toast for unexpected errors, not for service unavailability
+      // The message itself will inform the user about maintenance
     } catch (error) {
+      // This catch block should rarely be hit now since API handles errors gracefully
       console.error('Chat error:', error)
-      setToast({
-        show: true,
-        message: 'Failed to get response. Please try again.',
-        type: 'error'
-      })
 
       const errorMessage = {
         id: Date.now() + 1,
-        text: 'I apologize, but I encountered an error. Please try again.',
+        text: '⚠️ Unable to connect to the AI Legal Assistant. The service may be temporarily unavailable. Please try again later.',
         sender: 'bot',
-        timestamp: new Date()
+        timestamp: new Date(),
+        isError: true
       }
       setMessages(prev => [...prev, errorMessage])
     } finally {

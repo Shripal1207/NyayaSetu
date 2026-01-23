@@ -56,13 +56,39 @@ export const documentAnalyzerService = {
 
 export const chatbotService = {
   sendMessage: async (message) => {
-    const response = await chatbotApi.post('/get', { msg: message })
-    return response.data
+    try {
+      const response = await chatbotApi.post('/get', { msg: message })
+      return response.data
+    } catch (error) {
+      console.error('Chatbot service error:', error)
+      // Return a graceful fallback response when chatbot service is unavailable
+      return {
+        response: '⚠️ The AI Legal Assistant (NyaySetu) is currently undergoing maintenance. Please try again later or consult our Legal Dictionary for immediate assistance. We apologize for the inconvenience.',
+        error: true,
+        serviceUnavailable: true
+      }
+    }
   },
 
   getChatHistory: async () => {
-    const response = await chatbotApi.get('/chat_history')
-    return response.data
+    try {
+      const response = await chatbotApi.get('/chat_history')
+      return response.data
+    } catch (error) {
+      console.error('Chatbot history error:', error)
+      // Return empty history gracefully
+      return { history: [] }
+    }
+  },
+
+  // Check if chatbot service is available
+  checkHealth: async () => {
+    try {
+      await chatbotApi.get('/', { timeout: 5000 })
+      return { available: true }
+    } catch (error) {
+      return { available: false }
+    }
   }
 }
 
