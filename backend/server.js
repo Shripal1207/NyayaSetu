@@ -69,7 +69,12 @@ app.use('/api/admin', adminRoutes)
 app.use('/api/consultations', consultationRoutes)
 app.use('/api/messages', messageRoutes)
 
-// Health check
+// Health check at root for Render
+app.get('/', (req, res) => {
+  res.json({ status: 'OK', message: 'LegalNexus Backend API' })
+})
+
+// Health check at /api/health
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'OK',

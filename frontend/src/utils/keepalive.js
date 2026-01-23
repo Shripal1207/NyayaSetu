@@ -17,7 +17,7 @@ const pingService = async (name, url) => {
     if (!url) return
 
     try {
-        const healthUrl = `${url}/health`
+        const healthUrl = `${url}/api/health`
         const response = await fetch(healthUrl, {
             method: 'GET',
             mode: 'cors'
