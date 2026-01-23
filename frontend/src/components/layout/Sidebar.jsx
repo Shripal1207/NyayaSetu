@@ -26,7 +26,10 @@ const Sidebar = () => {
             try {
                 // Fetch unread message count
                 const msgResponse = await fetch(`${API_URL}/api/messages/conversations`, {
-                    headers: { 'x-user-id': currentUser.uid }
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-user-id': currentUser.uid
+                    }
                 })
                 let unreadMessages = 0
                 if (msgResponse.ok) {
@@ -36,7 +39,10 @@ const Sidebar = () => {
 
                 // Fetch upcoming consultations count (within next hour)
                 const consultResponse = await fetch(`${API_URL}/api/consultations/my`, {
-                    headers: { 'x-user-id': currentUser.uid }
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-user-id': currentUser.uid
+                    }
                 })
                 let upcomingCount = 0
                 if (consultResponse.ok) {
@@ -50,8 +56,9 @@ const Sidebar = () => {
                 }
 
                 setNotificationCount(unreadMessages + upcomingCount)
-            } catch (error) {
-                console.error('Error fetching notifications:', error)
+            } catch {
+                // Silently fail - notifications are not critical
+                // This prevents console spam when API is temporarily unavailable
             }
         }
 

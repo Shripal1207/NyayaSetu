@@ -101,8 +101,9 @@ export const saveChatToFirestore = async (db, userId, messages) => {
       chats: messages,
       updatedAt: serverTimestamp()
     }, { merge: true })
-  } catch (error) {
-    console.error('Error saving chat:', error)
+  } catch {
+    // Silently fail - chat history saving is not critical
+    // Firebase permissions may not be configured for this collection
   }
 }
 
