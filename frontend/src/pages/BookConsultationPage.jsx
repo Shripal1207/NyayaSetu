@@ -26,6 +26,8 @@ const BookConsultationPage = () => {
     const [notes, setNotes] = useState('')
     const [booking, setBooking] = useState(false)
     const [toast, setToast] = useState({ show: false, message: '', type: 'info' })
+    const [isManualTime, setIsManualTime] = useState(false)
+    const [manualTime, setManualTime] = useState('')
 
     const durations = [
         { value: 15, label: '15 min', price: '¼ of hourly' },
@@ -264,31 +266,79 @@ const BookConsultationPage = () => {
                             {/* Time Slots */}
                             <Card>
                                 <CardHeader>
-                                    <CardTitle>Select Time</CardTitle>
+                                    <div className="flex items-center justify-between">
+                                        <CardTitle>Select Time</CardTitle>
+                                        <label className="flex items-center gap-2 text-sm text-neutral-600 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                checked={isManualTime}
+                                                onChange={(e) => {
+                                                    setIsManualTime(e.target.checked)
+                                                    setSelectedSlot(null)
+                                                    setManualTime('')
+                                                }}
+                                                className="rounded border-neutral-300 text-primary-600 focus:ring-primary-500"
+                                            />
+                                            Manual Input
+                                        </label>
+                                    </div>
                                 </CardHeader>
                                 <CardContent>
-                                    {slots.length === 0 ? (
-                                        <p className="text-neutral-500 text-center py-8">
-                                            No available slots for this date
-                                        </p>
-                                    ) : (
-                                        <div className="grid grid-cols-4 sm:grid-cols-6 gap-3">
-                                            {slots.map((slot, i) => (
-                                                <button
-                                                    key={i}
-                                                    onClick={() => slot.available && setSelectedSlot(slot.time)}
-                                                    disabled={!slot.available}
-                                                    className={`py-2 px-3 rounded-lg text-sm font-medium transition-all ${selectedSlot === slot.time
-                                                        ? 'bg-primary-600 text-white'
-                                                        : slot.available
-                                                            ? 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
-                                                            : 'bg-neutral-100 text-neutral-400 cursor-not-allowed line-through'
-                                                        }`}
-                                                >
-                                                    {formatTime(slot.time)}
-                                                </button>
-                                            ))}
+                                    {isManualTime ? (
+                                        <div className="flex flex-col items-center py-6 gap-4">
+                                            <p className="text-sm text-neutral-500">
+                                                Manually select a time for testing or flexible scheduling.
+                                            </p>
+                                            <div className="flex items-center gap-3">
+                                                <Clock className="w-5 h-5 text-neutral-400" />
+                                                <input
+                                                    type="time"
+                                                    value={manualTime}
+                                                    onChange={(e) => {
+                                                        const timeStr = e.target.value
+                                                        setManualTime(timeStr)
+                                                        if (timeStr) {
+                                                            const [hours, minutes] = timeStr.split(':')
+                                                            const newDate = new Date(selectedDate)
+                                                            newDate.setHours(parseInt(hours), parseInt(minutes), 0, 0)
+                                                            setSelectedSlot(newDate.toISOString())
+                                                        } else {
+                                                            setSelectedSlot(null)
+                                                        }
+                                                    }}
+                                                    className="px-4 py-2 border border-neutral-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-lg"
+                                                />
+                                            </div>
+                                            {selectedSlot && (
+                                                <p className="text-sm text-primary-600 font-medium">
+                                                    Selected: {new Date(selectedSlot).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                                                </p>
+                                            )}
                                         </div>
+                                    ) : (
+                                        slots.length === 0 ? (
+                                            <p className="text-neutral-500 text-center py-8">
+                                                No available slots for this date
+                                            </p>
+                                        ) : (
+                                            <div className="grid grid-cols-4 sm:grid-cols-6 gap-3">
+                                                {slots.map((slot, i) => (
+                                                    <button
+                                                        key={i}
+                                                        onClick={() => slot.available && setSelectedSlot(slot.time)}
+                                                        disabled={!slot.available}
+                                                        className={`py-2 px-3 rounded-lg text-sm font-medium transition-all ${selectedSlot === slot.time
+                                                            ? 'bg-primary-600 text-white'
+                                                            : slot.available
+                                                                ? 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
+                                                                : 'bg-neutral-100 text-neutral-400 cursor-not-allowed line-through'
+                                                            }`}
+                                                    >
+                                                        {formatTime(slot.time)}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        )
                                     )}
                                 </CardContent>
                             </Card>

@@ -1,9 +1,9 @@
 /**
  * WebRTC Signaling Server using Socket.io
- * Handles peer-to-peer connection setup for video calls
+ * Handles peer-to-peer connection setup for video calls (Multi-user Mesh)
  */
 
-const rooms = new Map() // Track active rooms and participants
+const rooms = new Map() // Track active rooms and participants: roomId -> Map(socketId -> { userId, userName, socketId })
 
 export const initializeSignalingServer = (io) => {
     io.on('connection', (socket) => {
@@ -22,45 +22,44 @@ export const initializeSignalingServer = (io) => {
             if (!rooms.has(roomId)) {
                 rooms.set(roomId, new Map())
             }
-            rooms.get(roomId).set(socket.id, { id: socket.id, oduserId: userId, userName })
+            
+            // Add user to room
+            rooms.get(roomId).set(socket.id, { 
+                socketId: socket.id, 
+                userId, 
+                userName 
+            })
 
             // Notify others in the room
             socket.to(roomId).emit('user-joined', {
-                id: socket.id,
+                socketId: socket.id,
                 userId,
                 userName
             })
 
-            // Send current participants to the new user
-            const participants = Array.from(rooms.get(roomId).values())
-                .filter(p => p.id !== socket.id)
-            socket.emit('room-participants', participants)
+            // Send list of existing users to the new user
+            const existingUsers = []
+            rooms.get(roomId).forEach((user, sid) => {
+                if (sid !== socket.id) {
+                    existingUsers.push(user)
+                }
+            })
+            socket.emit('existing-users', existingUsers)
         })
 
-        // Handle WebRTC offer
-        socket.on('offer', ({ to, offer }) => {
-            console.log(`📤 Offer from ${socket.id} to ${to}`)
-            socket.to(to).emit('offer', {
-                from: socket.id,
-                offer
-            })
+        // WebRTC signaling: Send offer
+        socket.on('offer', ({ offer, to, from }) => {
+            io.to(to).emit('offer', { offer, from })
         })
 
-        // Handle WebRTC answer
-        socket.on('answer', ({ to, answer }) => {
-            console.log(`📥 Answer from ${socket.id} to ${to}`)
-            socket.to(to).emit('answer', {
-                from: socket.id,
-                answer
-            })
+        // WebRTC signaling: Send answer
+        socket.on('answer', ({ answer, to, from }) => {
+            io.to(to).emit('answer', { answer, from })
         })
 
-        // Handle ICE candidates
-        socket.on('ice-candidate', ({ to, candidate }) => {
-            socket.to(to).emit('ice-candidate', {
-                from: socket.id,
-                candidate
-            })
+        // WebRTC signaling: ICE candidate exchange
+        socket.on('ice-candidate', ({ candidate, to, from }) => {
+            io.to(to).emit('ice-candidate', { candidate, from })
         })
 
         // Handle mute/unmute audio
@@ -110,48 +109,39 @@ export const initializeSignalingServer = (io) => {
             })
         })
 
+        // Handle leaving room explicitly
+        socket.on('leave-room', ({ roomId }) => {
+            socket.leave(roomId)
+            if (rooms.has(roomId)) {
+                rooms.get(roomId).delete(socket.id)
+                if (rooms.get(roomId).size === 0) {
+                    rooms.delete(roomId)
+                }
+            }
+            socket.to(roomId).emit('user-left', { socketId: socket.id })
+            console.log(`User left room ${roomId}`)
+        })
+
         // Handle disconnect
         socket.on('disconnect', () => {
             console.log(`🔌 Client disconnected: ${socket.id}`)
 
-            const roomId = socket.roomId
-            if (roomId && rooms.has(roomId)) {
-                rooms.get(roomId).delete(socket.id)
-
-                // Notify others that user left
-                socket.to(roomId).emit('user-left', {
-                    id: socket.id,
-                    userName: socket.userName
-                })
-
-                // Clean up empty rooms
-                if (rooms.get(roomId).size === 0) {
-                    rooms.delete(roomId)
-                    console.log(`🚪 Room ${roomId} closed (empty)`)
+            // Clean up from all rooms this socket might be in
+            rooms.forEach((users, roomId) => {
+                if (users.has(socket.id)) {
+                    users.delete(socket.id)
+                    socket.to(roomId).emit('user-left', { socketId: socket.id })
+                    if (users.size === 0) {
+                        rooms.delete(roomId)
+                        console.log(`🚪 Room ${roomId} closed (empty)`)
+                    }
                 }
-            }
-        })
-
-        // Handle leaving room (without disconnect)
-        socket.on('leave-room', ({ roomId }) => {
-            socket.leave(roomId)
-
-            if (rooms.has(roomId)) {
-                rooms.get(roomId).delete(socket.id)
-
-                socket.to(roomId).emit('user-left', {
-                    id: socket.id,
-                    userName: socket.userName
-                })
-
-                if (rooms.get(roomId).size === 0) {
-                    rooms.delete(roomId)
-                }
-            }
+            })
         })
     })
 
-    console.log('✅ WebRTC Signaling Server initialized')
+    console.log('✅ WebRTC Signaling Server initialized (Multi-user)')
 }
 
 export default initializeSignalingServer
+

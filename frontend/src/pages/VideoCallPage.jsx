@@ -25,20 +25,20 @@ const VideoCallPage = () => {
     const [callDuration, setCallDuration] = useState(0)
     const [toast, setToast] = useState({ show: false, message: '', type: 'info' })
 
-    const localVideoRef = useRef(null)
-    const remoteVideoRef = useRef(null)
     const containerRef = useRef(null)
     const callTimerRef = useRef(null)
 
+    const userName = currentUser?.displayName || 'User'
+    const userId = currentUser?.uid
+
     const {
         localStream,
-        remoteStream,
+        remoteStreams,
+        participants,
         isConnected,
-        isAudioMuted,
-        isVideoOff,
+        isAudioEnabled,
+        isVideoEnabled,
         isScreenSharing,
-        remotePeer,
-        connectionState,
         chatMessages,
         error,
         joinRoom,
@@ -48,7 +48,7 @@ const VideoCallPage = () => {
         toggleScreenShare,
         sendChatMessage,
         endCall
-    } = useWebRTC(roomId, currentUser?.uid, currentUser?.displayName)
+    } = useWebRTC(roomId, userId, userName)
 
     // Fetch consultation details
     useEffect(() => {
@@ -73,23 +73,9 @@ const VideoCallPage = () => {
         }
     }, [roomId, currentUser])
 
-    // Attach local stream to video element
-    useEffect(() => {
-        if (localStream && localVideoRef.current) {
-            localVideoRef.current.srcObject = localStream
-        }
-    }, [localStream])
-
-    // Attach remote stream to video element
-    useEffect(() => {
-        if (remoteStream && remoteVideoRef.current) {
-            remoteVideoRef.current.srcObject = remoteStream
-        }
-    }, [remoteStream])
-
     // Call duration timer
     useEffect(() => {
-        if (connectionState === 'connected' && !callTimerRef.current) {
+        if (isConnected && !callTimerRef.current) {
             callTimerRef.current = setInterval(() => {
                 setCallDuration(prev => prev + 1)
             }, 1000)
@@ -98,9 +84,10 @@ const VideoCallPage = () => {
         return () => {
             if (callTimerRef.current) {
                 clearInterval(callTimerRef.current)
+                callTimerRef.current = null
             }
         }
-    }, [connectionState])
+    }, [isConnected])
 
     // Handle error display
     useEffect(() => {
@@ -111,15 +98,15 @@ const VideoCallPage = () => {
 
     // Join room on mount
     useEffect(() => {
-        if (isConnected && currentUser?.uid) {
+        if (currentUser?.uid && !loading) {
             joinRoom()
         }
-    }, [isConnected, currentUser])
+    }, [currentUser, loading, joinRoom])
 
     const handleEndCall = async () => {
         endCall()
 
-        // Update consultation status
+        // Update consultation status if it's a consultation
         if (consultation?._id) {
             try {
                 await fetch(`${API_URL}/api/consultations/${consultation._id}/end`, {
@@ -166,6 +153,9 @@ const VideoCallPage = () => {
         return `${mins}:${secs.toString().padStart(2, '0')}`
     }
 
+    // Participants count including self
+    const participantCount = participants.length + 1
+
     if (loading) {
         return (
             <div className="min-h-screen bg-neutral-900 flex items-center justify-center">
@@ -177,18 +167,7 @@ const VideoCallPage = () => {
         )
     }
 
-    // Determine the other party's name based on current user
-    const getOtherPartyName = () => {
-        if (!consultation) return 'Video Consultation'
-
-        const isClient = consultation.clientId?._id === currentUser?.uid
-
-        if (isClient) {
-            return consultation.lawyerId?.name || 'Lawyer'
-        } else {
-            return consultation.clientId?.name || 'Client'
-        }
-    }
+    const remoteStreamEntries = Object.entries(remoteStreams)
 
     return (
         <div
@@ -199,23 +178,18 @@ const VideoCallPage = () => {
             <div className="absolute top-0 left-0 right-0 z-20 bg-gradient-to-b from-black/70 to-transparent p-4">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-4">
-                        <div className={`w-3 h-3 rounded-full ${connectionState === 'connected' ? 'bg-green-500' :
-                            connectionState === 'connecting' ? 'bg-yellow-500 animate-pulse' :
-                                'bg-red-500'
-                            }`} />
+                        <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-500' : 'bg-yellow-500 animate-pulse'}`} />
                         <div className="text-white">
-                            <h2 className="font-semibold">{getOtherPartyName()}</h2>
+                            <h2 className="font-semibold">{consultation?.title || 'Video Meeting'}</h2>
                             <div className="flex items-center gap-4 text-sm text-neutral-400">
                                 <span className="flex items-center gap-1">
                                     <Clock className="w-4 h-4" />
                                     {formatDuration(callDuration)}
                                 </span>
-                                {remotePeer && (
-                                    <span className="flex items-center gap-1">
-                                        <Users className="w-4 h-4" />
-                                        {remotePeer.userName || 'Connected'}
-                                    </span>
-                                )}
+                                <span className="flex items-center gap-1">
+                                    <Users className="w-4 h-4" />
+                                    {participantCount} participants
+                                </span>
                             </div>
                         </div>
                     </div>
@@ -231,55 +205,43 @@ const VideoCallPage = () => {
                 </div>
             </div>
 
-            {/* Video Grid */}
-            <div className="flex-1 flex items-center justify-center p-4 pt-20 pb-24">
-                <div className="relative w-full max-w-6xl aspect-video">
-                    {/* Remote Video (Main) */}
-                    <div className="w-full h-full bg-neutral-800 rounded-2xl overflow-hidden">
-                        {remoteStream ? (
-                            <video
-                                ref={remoteVideoRef}
-                                autoPlay
-                                playsInline
-                                className="w-full h-full object-cover"
-                            />
-                        ) : (
-                            <div className="w-full h-full flex flex-col items-center justify-center">
-                                <div className="w-24 h-24 rounded-full bg-neutral-700 flex items-center justify-center mb-4">
-                                    <Users className="w-12 h-12 text-neutral-500" />
-                                </div>
-                                <p className="text-neutral-400">
-                                    {connectionState === 'connecting' ? 'Connecting...' : 'Waiting for participant...'}
-                                </p>
-                            </div>
-                        )}
+            {/* Main Video Grid */}
+            <div className="flex-1 overflow-hidden p-4 pt-20 pb-24">
+                <div className={`h-full grid gap-4 ${remoteStreamEntries.length === 0 ? 'grid-cols-1' :
+                        remoteStreamEntries.length === 1 ? 'grid-cols-1 md:grid-cols-2' :
+                            'grid-cols-2 md:grid-cols-3'
+                    }`}>
+                    {/* Local Video */}
+                    <div className="relative bg-neutral-800 rounded-2xl overflow-hidden aspect-video">
+                        <LocalVideo stream={localStream} isVideoEnabled={isVideoEnabled} />
+                        <div className="absolute bottom-4 left-4 bg-black/50 px-3 py-1 rounded-lg text-white text-sm flex items-center gap-2">
+                            <span>You</span>
+                            {!isAudioEnabled && <MicOff className="w-3 h-3 text-red-500" />}
+                        </div>
                     </div>
 
-                    {/* Local Video (PiP) */}
-                    <motion.div
-                        initial={{ scale: 0 }}
-                        animate={{ scale: 1 }}
-                        className="absolute bottom-4 right-4 w-48 aspect-video bg-neutral-800 rounded-xl overflow-hidden shadow-lg border-2 border-neutral-700"
-                    >
-                        {localStream && !isVideoOff ? (
-                            <video
-                                ref={localVideoRef}
-                                autoPlay
-                                playsInline
-                                muted
-                                className="w-full h-full object-cover mirror"
-                            />
-                        ) : (
-                            <div className="w-full h-full flex items-center justify-center">
-                                <VideoOff className="w-8 h-8 text-neutral-500" />
+                    {/* Remote Videos */}
+                    {remoteStreamEntries.map(([id, stream]) => {
+                        const participant = participants.find(p => p.socketId === id)
+                        return (
+                            <div key={id} className="relative bg-neutral-800 rounded-2xl overflow-hidden aspect-video">
+                                <RemoteVideo stream={stream} />
+                                <div className="absolute bottom-4 left-4 bg-black/50 px-3 py-1 rounded-lg text-white text-sm">
+                                    {participant?.userName || 'Participant'}
+                                </div>
                             </div>
-                        )}
-                        {isAudioMuted && (
-                            <div className="absolute top-2 right-2 p-1 bg-red-500 rounded-full">
-                                <MicOff className="w-3 h-3 text-white" />
+                        )
+                    })}
+
+                    {/* Waiting State */}
+                    {remoteStreamEntries.length === 0 && (
+                        <div className="flex items-center justify-center bg-neutral-800/50 rounded-2xl border-2 border-dashed border-neutral-700">
+                            <div className="text-center text-neutral-400">
+                                <Users className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                                <p>Waiting for others to join...</p>
                             </div>
-                        )}
-                    </motion.div>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -288,12 +250,12 @@ const VideoCallPage = () => {
                 <div className="flex items-center justify-center gap-4">
                     <button
                         onClick={toggleAudio}
-                        className={`p-4 rounded-full transition-colors ${isAudioMuted
+                        className={`p-4 rounded-full transition-colors ${!isAudioEnabled
                             ? 'bg-red-500 hover:bg-red-600'
                             : 'bg-neutral-700 hover:bg-neutral-600'
                             }`}
                     >
-                        {isAudioMuted ? (
+                        {!isAudioEnabled ? (
                             <MicOff className="w-6 h-6 text-white" />
                         ) : (
                             <Mic className="w-6 h-6 text-white" />
@@ -302,12 +264,12 @@ const VideoCallPage = () => {
 
                     <button
                         onClick={toggleVideo}
-                        className={`p-4 rounded-full transition-colors ${isVideoOff
+                        className={`p-4 rounded-full transition-colors ${!isVideoEnabled
                             ? 'bg-red-500 hover:bg-red-600'
                             : 'bg-neutral-700 hover:bg-neutral-600'
                             }`}
                     >
-                        {isVideoOff ? (
+                        {!isVideoEnabled ? (
                             <VideoOff className="w-6 h-6 text-white" />
                         ) : (
                             <Video className="w-6 h-6 text-white" />
@@ -405,13 +367,56 @@ const VideoCallPage = () => {
                 isVisible={toast.show}
                 onClose={() => setToast({ ...toast, show: false })}
             />
-
-            <style jsx>{`
-        .mirror {
-          transform: scaleX(-1);
-        }
-      `}</style>
         </div>
+    )
+}
+
+// Local Video Component with Memoization check implicitly handled by React re-renders or useRef
+const LocalVideo = ({ stream, isVideoEnabled }) => {
+    const videoRef = useRef(null)
+
+    useEffect(() => {
+        if (videoRef.current && stream) {
+            videoRef.current.srcObject = stream
+        }
+    }, [stream])
+
+    return (
+        <div className="w-full h-full relative">
+            {stream && isVideoEnabled ? (
+                <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full h-full object-cover transform -scale-x-100"
+                />
+            ) : (
+                <div className="w-full h-full flex items-center justify-center bg-neutral-700">
+                    <VideoOff className="w-12 h-12 text-neutral-500" />
+                </div>
+            )}
+        </div>
+    )
+}
+
+// Remote Video Component
+const RemoteVideo = ({ stream }) => {
+    const videoRef = useRef(null)
+
+    useEffect(() => {
+        if (videoRef.current && stream) {
+            videoRef.current.srcObject = stream
+        }
+    }, [stream])
+
+    return (
+        <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            className="w-full h-full object-cover"
+        />
     )
 }
 
