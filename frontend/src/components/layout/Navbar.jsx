@@ -66,10 +66,7 @@ const Navbar = () => {
           </Link>
 
           <div className="hidden md:flex items-center gap-8">
-            {navLinks.map((link) => {
-              if (link.protected && !currentUser) return null
-
-              return (
+            {navLinks.map((link) => (
                 <Link
                   key={link.path}
                   to={link.path}
@@ -87,8 +84,7 @@ const Navbar = () => {
                     />
                   )}
                 </Link>
-              )
-            })}
+            ))}
           </div>
 
           <div className="hidden md:flex items-center gap-4">
@@ -151,22 +147,13 @@ const Navbar = () => {
                 </AnimatePresence>
               </div>
             ) : (
-              <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => navigate('/auth')}
-                >
-                  Sign In
-                </Button>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => navigate('/auth')}
-                >
-                  Get Started
-                </Button>
-              </>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => navigate('/advocate-login')}
+              >
+                Advocate Login
+              </Button>
             )}
           </div>
 
@@ -193,22 +180,18 @@ const Navbar = () => {
             className="md:hidden bg-white border-t border-neutral-200"
           >
             <div className="px-4 py-4 space-y-3">
-              {navLinks.map((link) => {
-                if (link.protected && !currentUser) return null
-
-                return (
-                  <Link
-                    key={link.path}
-                    to={link.path}
-                    className={`block px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${isActivePath(link.path)
-                      ? 'bg-primary-50 text-primary-600'
-                      : 'text-neutral-700 hover:bg-neutral-50'
-                      }`}
-                  >
-                    {link.name}
-                  </Link>
-                )
-              })}
+              {navLinks.map((link) => (
+                <Link
+                  key={link.path}
+                  to={link.path}
+                  className={`block px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${isActivePath(link.path)
+                    ? 'bg-primary-50 text-primary-600'
+                    : 'text-neutral-700 hover:bg-neutral-50'
+                    }`}
+                >
+                  {link.name}
+                </Link>
+              ))}
 
               {currentUser ? (
                 <>
@@ -238,22 +221,14 @@ const Navbar = () => {
                   </div>
                 </>
               ) : (
-                <div className="pt-3 border-t border-neutral-200 space-y-2">
+                <div className="pt-3 border-t border-neutral-200">
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => navigate('/auth')}
+                    onClick={() => navigate('/advocate-login')}
                     className="w-full"
                   >
-                    Sign In
-                  </Button>
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={() => navigate('/auth')}
-                    className="w-full"
-                  >
-                    Get Started
+                    Advocate Login
                   </Button>
                 </div>
               )}

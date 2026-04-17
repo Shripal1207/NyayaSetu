@@ -71,7 +71,7 @@ const Sidebar = () => {
     const handleLogout = async () => {
         try {
             await logout()
-            navigate('/auth')
+            navigate('/')
         } catch (error) {
             console.error('Logout error:', error)
         }
@@ -247,12 +247,12 @@ const Sidebar = () => {
                     </>
                 ) : (
                     <Link
-                        to="/auth"
+                        to="/advocate-login"
                         onClick={() => setIsMobileOpen(false)}
                         className="flex items-center gap-3 px-4 py-3 rounded-xl bg-primary-600 text-white hover:bg-primary-700 transition-all"
                     >
                         <User className="w-5 h-5 flex-shrink-0" />
-                        {!isCollapsed && <span className="font-medium">Sign In</span>}
+                        {!isCollapsed && <span className="font-medium">Advocate Login</span>}
                     </Link>
                 )}
             </div>

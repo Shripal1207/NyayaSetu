@@ -34,10 +34,10 @@ const CTA = () => {
             <Button
               size="lg"
               variant="secondary"
-              onClick={() => navigate(currentUser ? '/chat' : '/auth')}
+              onClick={() => navigate('/chat')}
               className="group bg-white text-primary-600 hover:bg-primary-50"
             >
-              {currentUser ? 'Go to Dashboard' : 'Sign Up Free'}
+              {currentUser ? 'Go to Dashboard' : 'Learn More'}
               <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
             </Button>
 

@@ -5,7 +5,7 @@ import Layout from './components/layout/Layout'
 import Loader from './components/ui/Loader'
 
 import HomePage from './pages/HomePage'
-import AuthPage from './pages/AuthPage'
+import AdvocateLoginPage from './pages/AdvocateLoginPage'
 import ChatbotPage from './pages/ChatbotPage'
 import DocumentAnalyzerPage from './pages/DocumentAnalyzerPage'
 import LawyerSearchPage from './pages/LawyerSearchPage'
@@ -23,7 +23,7 @@ import TermsPage from './pages/TermsPage'
 import NotFoundPage from './pages/NotFoundPage'
 
 // Pages that should NOT have the sidebar
-const noSidebarRoutes = ['/', '/auth', '/call']
+const noSidebarRoutes = ['/', '/call', '/advocate-login']
 
 function AppContent() {
   const location = useLocation()
@@ -45,37 +45,13 @@ function AppContent() {
   const routes = (
     <Routes>
       <Route path="/" element={<HomePage />} />
-      <Route path="/auth" element={<AuthPage />} />
+      <Route path="/advocate-login" element={<AdvocateLoginPage />} />
       <Route path="/privacy" element={<PrivacyPolicyPage />} />
       <Route path="/terms" element={<TermsPage />} />
       <Route path="/dictionary" element={<LegalDictionaryPage />} />
-
-      <Route
-        path="/chat"
-        element={
-          <ProtectedRoute>
-            <ChatbotPage />
-          </ProtectedRoute>
-        }
-      />
-
-      <Route
-        path="/analyze"
-        element={
-          <ProtectedRoute>
-            <DocumentAnalyzerPage />
-          </ProtectedRoute>
-        }
-      />
-
-      <Route
-        path="/lawyers"
-        element={
-          <ProtectedRoute>
-            <LawyerSearchPage />
-          </ProtectedRoute>
-        }
-      />
+      <Route path="/chat" element={<ChatbotPage />} />
+      <Route path="/analyze" element={<DocumentAnalyzerPage />} />
+      <Route path="/lawyers" element={<LawyerSearchPage />} />
 
       <Route
         path="/lawyer/:id"

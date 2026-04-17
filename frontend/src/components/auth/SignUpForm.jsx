@@ -7,7 +7,7 @@ import Button from '../ui/Button'
 import Input from '../ui/Input'
 import Toast from '../ui/Toast'
 
-const SignUpForm = ({ userType, onSignUpSuccess, onSwitchToSignIn }) => {
+const SignUpForm = ({ userType, onSignUpSuccess, onBack }) => {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -95,13 +95,16 @@ const SignUpForm = ({ userType, onSignUpSuccess, onSwitchToSignIn }) => {
         transition={{ duration: 0.3 }}
         className="w-full max-w-md"
       >
-        <button
-          onClick={onSwitchToSignIn}
-          className="flex items-center gap-2 text-neutral-600 hover:text-neutral-900 mb-6 transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back
-        </button>
+        {onBack && (
+          <button
+            onClick={onBack}
+            type="button"
+            className="flex items-center gap-2 text-neutral-600 hover:text-neutral-900 mb-6 transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back
+          </button>
+        )}
 
         <div className="bg-white rounded-2xl shadow-xl p-8">
           <div className="text-center mb-8">
@@ -193,15 +196,6 @@ const SignUpForm = ({ userType, onSignUpSuccess, onSwitchToSignIn }) => {
             </Button>
           </form>
 
-          <p className="text-center text-sm text-neutral-600 mt-6">
-            Already have an account?{' '}
-            <button
-              onClick={onSwitchToSignIn}
-              className="text-primary-600 font-medium hover:underline"
-            >
-              Sign in
-            </button>
-          </p>
         </div>
       </motion.div>
 

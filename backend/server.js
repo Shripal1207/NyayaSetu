@@ -13,7 +13,9 @@ import verificationRoutes from './routes/verification.route.js'
 import adminRoutes from './routes/admin.route.js'
 import consultationRoutes from './routes/consultation.route.js'
 import messageRoutes from './routes/message.route.js'
+import documentRoutes from './routes/document.route.js'
 import initializeSignalingServer from './utils/signaling.js'
+import { sendMessage as chatSendMessage, chatHealth, chatDiagnose } from './controllers/chat.controller.js'
 
 dotenv.config()
 
@@ -81,21 +83,37 @@ app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 app.use('/api/', limiter)
 
-// MongoDB Connection
-mongoose.connect(process.env.MONGO_URI)
+// MongoDB Connection (server stays up so you can use frontend; add MONGO_URI for DB features)
+mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/legalnexus')
   .then(() => console.log('✅ MongoDB Connected'))
   .catch(err => {
-    console.error('❌ MongoDB Connection Error:', err)
-    process.exit(1)
+    console.error('❌ MongoDB Connection Error:', err.message || err)
+    console.warn('⚠️  Server continuing without DB. Set MONGO_URI in .env (e.g. MongoDB Atlas) for auth/data.')
   })
 
-// Routes
+// Routes – chat first so POST /api/chat always matches
+const chatHandler = (req, res, next) => {
+  Promise.resolve(chatSendMessage(req, res)).catch(next)
+}
+// Health before catch-all so GET /api/chat/health is exact
+app.get('/api/chat/health', (req, res, next) => {
+  Promise.resolve(chatHealth(req, res)).catch(next)
+})
+// Diagnose: open in browser to see exact Gemini error if chat fails
+app.get('/api/chat/diagnose', (req, res, next) => {
+  Promise.resolve(chatDiagnose(req, res)).catch(next)
+})
+// POST /api/chat or /api/chat/ (regex so path always matches)
+app.post(/^\/api\/chat\/?$/, chatHandler)
+// Debug: open http://localhost:5001/api/chat/ping to confirm backend is reached
+app.get('/api/chat/ping', (req, res) => res.json({ ok: true, message: 'Chat backend is reachable' }))
 app.use('/api/auth', authRoutes)
 app.use('/api/users', userRoutes)
 app.use('/api/verification', verificationRoutes)
 app.use('/api/admin', adminRoutes)
 app.use('/api/consultations', consultationRoutes)
 app.use('/api/messages', messageRoutes)
+app.use('/api/document', documentRoutes)
 
 // Health check at root for Render
 app.get('/', (req, res) => {
@@ -128,6 +146,7 @@ app.use((err, req, res, next) => {
 
 // 404 handler
 app.use((req, res) => {
+  console.warn('404:', req.method, req.originalUrl || req.url)
   res.status(404).json({ error: 'Route not found' })
 })
 

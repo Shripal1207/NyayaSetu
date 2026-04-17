@@ -1,0 +1,6 @@
+Metric,Definition,Value
+Availability Rate,Successful responses / total queries,100.0%
+Average Latency (ms),Mean response time across all queries,8538.64
+Section Reference Rate,Responses mentioning legal section/act,100.0%
+Lawyer Disclaimer Rate,Responses advising consultation with lawyer,100.0%
+Mean Keyword Accuracy,Average expected-keyword overlap,86.2%

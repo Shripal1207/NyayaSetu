@@ -2,7 +2,7 @@ import { motion } from 'framer-motion'
 import { User, Scale, ArrowRight } from 'lucide-react'
 import Button from '../ui/Button'
 
-const UserTypeSelection = ({ onSelectType, onSwitchToSignIn }) => {
+const UserTypeSelection = ({ onSelectType }) => {
   const userTypes = [
     {
       type: 'client',
@@ -68,17 +68,6 @@ const UserTypeSelection = ({ onSelectType, onSwitchToSignIn }) => {
         ))}
       </div>
 
-      <div className="text-center">
-        <p className="text-neutral-600">
-          Already have an account?{' '}
-          <button
-            onClick={onSwitchToSignIn}
-            className="text-primary-600 font-medium hover:underline"
-          >
-            Sign in
-          </button>
-        </p>
-      </div>
     </motion.div>
   )
 }

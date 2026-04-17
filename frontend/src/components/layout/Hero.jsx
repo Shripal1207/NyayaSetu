@@ -48,10 +48,10 @@ const Hero = () => {
             <div className="flex flex-col sm:flex-row gap-4 mb-10">
               <Button
                 size="lg"
-                onClick={() => navigate(currentUser ? '/chat' : '/auth')}
+                onClick={() => navigate('/chat')}
                 className="group"
               >
-                {currentUser ? 'Start Chatting' : 'Get Started Free'}
+                Start Chatting
                 <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
               </Button>
               

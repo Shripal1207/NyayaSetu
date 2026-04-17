@@ -1,10 +1,9 @@
-import { Navigate, useLocation } from 'react-router-dom'
+import { Navigate } from 'react-router-dom'
 import { useFirebase } from '../context/FirebaseContext'
 import Loader from './ui/Loader'
 
 const ProtectedRoute = ({ children }) => {
   const { currentUser, loading } = useFirebase()
-  const location = useLocation()
 
   if (loading) {
     return (
@@ -15,7 +14,7 @@ const ProtectedRoute = ({ children }) => {
   }
 
   if (!currentUser) {
-    return <Navigate to="/auth" state={{ from: location }} replace />
+    return <Navigate to="/" replace />
   }
 
   return children

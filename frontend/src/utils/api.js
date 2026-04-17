@@ -1,7 +1,7 @@
 import axios from 'axios'
 
-const DOC_ANALYZER_URL = import.meta.env.VITE_DOC_ANALYZER_URL || 'http://localhost:8000'
-const CHATBOT_URL = import.meta.env.VITE_CHATBOT_URL || 'http://localhost:8080'
+// Always use backend URL so chat/document API hit the Node server (backend .env has PORT=5001)
+const BACKEND_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001'
 
 const createApiInstance = (baseURL) => {
   const instance = axios.create({
@@ -23,33 +23,34 @@ const createApiInstance = (baseURL) => {
   return instance
 }
 
-const docAnalyzerApi = createApiInstance(DOC_ANALYZER_URL)
-const chatbotApi = createApiInstance(CHATBOT_URL)
+const backendApi = createApiInstance(BACKEND_URL)
 
+// Document analyzer: use backend proxy (avoids CORS; backend forwards to ML service)
 export const documentAnalyzerService = {
   uploadDocument: async (files) => {
     const formData = new FormData()
     files.forEach(file => {
       formData.append('pdfs', file)
     })
-
-    const response = await docAnalyzerApi.post('/upload', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
+    const response = await backendApi.post('/api/document/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
+      timeout: 120000
     })
     return response.data
   },
 
   getExplanation: async (language = 'English') => {
-    const response = await docAnalyzerApi.get('/explain', {
-      params: { language }
+    const response = await backendApi.get('/api/document/explain', {
+      params: { language },
+      timeout: 60000
     })
     return response.data
   },
 
   askQuestion: async (question, language = 'English') => {
-    const response = await docAnalyzerApi.post('/ask', { question, language })
+    const response = await backendApi.post('/api/document/ask', { question, language }, { timeout: 60000 })
     return response.data
   }
 }
@@ -57,34 +58,24 @@ export const documentAnalyzerService = {
 export const chatbotService = {
   sendMessage: async (message) => {
     try {
-      const response = await chatbotApi.post('/get', { msg: message })
+      const response = await backendApi.post('/api/chat', { msg: message })
       return response.data
     } catch (error) {
       console.error('Chatbot service error:', error)
-      // Return a graceful fallback response when chatbot service is unavailable
+      const backendMsg = error.response?.data?.response || error.response?.data?.error
       return {
-        response: '⚠️ The AI Legal Assistant (NyaySetu) is currently undergoing maintenance. Please try again later or consult our Legal Dictionary for immediate assistance. We apologize for the inconvenience.',
+        response: backendMsg || '⚠️ The AI Legal Assistant (NyaySetu) is temporarily unavailable. Ensure the backend is running (npm start in backend folder) and GOOGLE_API_KEY is set in backend/.env',
         error: true,
         serviceUnavailable: true
       }
     }
   },
 
-  getChatHistory: async () => {
-    try {
-      const response = await chatbotApi.get('/chat_history')
-      return response.data
-    } catch (error) {
-      console.error('Chatbot history error:', error)
-      // Return empty history gracefully
-      return { history: [] }
-    }
-  },
+  getChatHistory: async () => ({ history: [] }),
 
-  // Check if chatbot service is available
   checkHealth: async () => {
     try {
-      await chatbotApi.get('/', { timeout: 5000 })
+      await backendApi.get('/api/chat/health', { timeout: 5000 })
       return { available: true }
     } catch (error) {
       return { available: false }

@@ -1,0 +1,19 @@
+{
+  "total_queries": 10,
+  "successful_queries": 10,
+  "availability_rate": 1.0,
+  "avg_latency_ms": 8538.64,
+  "section_reference_rate": 1.0,
+  "lawyer_disclaimer_rate": 1.0,
+  "mean_keyword_accuracy": 0.862,
+  "category_keyword_accuracy": {
+    "Criminal": 0.783,
+    "Consumer": 1.0,
+    "Cyber": 0.8,
+    "Property": 1.0,
+    "Family": 1.0,
+    "Employment": 1.0,
+    "Defamation": 0.8,
+    "Police Procedure": 0.667
+  }
+}
