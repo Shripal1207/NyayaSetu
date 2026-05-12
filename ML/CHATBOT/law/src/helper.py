@@ -1,32 +1,42 @@
-from langchain_community.document_loaders import PyPDFLoader, DirectoryLoader
+import os
+
+from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceEmbeddings
 
 
-def load_pdf_file(data):
-    """Extract data from PDF files in a directory"""
+def load_pdf_file(data: str):
+    """Extract data from all PDF files in a directory."""
     loader = DirectoryLoader(
         data,
         glob="*.pdf",
-        loader_cls=PyPDFLoader
+        loader_cls=PyPDFLoader,
     )
-    documents = loader.load()
-    return documents
+    return loader.load()
 
 
 def text_split(extracted_data):
-    """Split documents into text chunks"""
+    """Split documents into ~500-char chunks with 20-char overlap."""
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=500,
-        chunk_overlap=20
+        chunk_overlap=20,
     )
-    text_chunks = text_splitter.split_documents(extracted_data)
-    return text_chunks
+    return text_splitter.split_documents(extracted_data)
 
 
-def download_hugging_face_embeddings():
-    """Download and initialize HuggingFace embeddings model"""
-    embeddings = HuggingFaceEmbeddings(
-        model_name='sentence-transformers/all-MiniLM-L6-v2'
+def get_gemini_embeddings():
+    """
+    Build a Gemini embeddings client using GOOGLE_API_KEY from the environment.
+    Model: text-embedding-004 (768-dim).
+    """
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        raise ValueError(
+            "GOOGLE_API_KEY is not set. Add it to ML/CHATBOT/law/.env. "
+            "Get a free key at https://aistudio.google.com/apikey"
+        )
+
+    return GoogleGenerativeAIEmbeddings(
+        model="models/text-embedding-004",
+        google_api_key=api_key,
     )
-    return embeddings

@@ -49,3 +49,7 @@ logs/
 *.tmp
 *.temp
 uploaded_text.txt
+
+# Local FAISS index built by store_index.py
+faiss_index/
+

@@ -1,282 +1,312 @@
-from flask import Flask, render_template, request, jsonify, session
-from langchain_pinecone import PineconeVectorStore
-from langchain_groq import ChatGroq
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables.history import RunnableWithMessageHistory
-from langchain_community.chat_message_histories import ChatMessageHistory
-from langchain_core.chat_history import BaseChatMessageHistory
-from langchain_huggingface import HuggingFaceEmbeddings
-from dotenv import load_dotenv
-from flask_cors import CORS
+"""
+NyaySetu RAG chatbot backend.
+
+Stack:
+    LLM:        Google Gemini (gemini-2.5-flash) via langchain-google-genai
+    Embeddings: Google Gemini text-embedding-004 via langchain-google-genai
+    Vector DB:  FAISS (local, no API keys, persisted under ./faiss_index/)
+    Server:     Flask + flask-cors (single backend for the React frontend)
+
+Exposes:
+    POST /api/chat               body: {"msg": "..."}     -> {"response": "..."}
+    GET  /api/chat/health        -> {"status": "OK", ...}
+    GET  /api/chat/diagnose      -> quick Gemini connectivity check
+    GET  /api/chat/ping          -> liveness probe
+    GET  /api/health             -> liveness probe
+    POST /api/chat/clear         -> clears the in-memory session history
+"""
+
+from __future__ import annotations
+
 import os
 import re
 from datetime import datetime
+from pathlib import Path
+from typing import Dict, List
+
+from dotenv import load_dotenv
+from flask import Flask, jsonify, request, session
+from flask_cors import CORS
+from langchain_community.chat_message_histories import ChatMessageHistory
+from langchain_community.vectorstores import FAISS
+from langchain_core.chat_history import BaseChatMessageHistory
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_google_genai import ChatGoogleGenerativeAI
+
+from src.helper import get_gemini_embeddings
 
 
-def download_hugging_face_embeddings():
-    """Download and initialize HuggingFace embeddings model"""
-    embeddings = HuggingFaceEmbeddings(
-        model_name='sentence-transformers/all-MiniLM-L6-v2'
-    )
-    return embeddings
-
-
-def format_response(text):
-    """Format the bot response for better readability"""
-    # Remove ** from bold text
-    text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
-    
-    # Convert numbered points into separate lines
-    text = re.sub(r"(\d+\.)", r"<br>\1", text)  
-    
-    # Bold headings
-    text = re.sub(r"(\d+\.\s)(.*?):", r"\1<b>\2</b>:", text)  
-    
-    # Ensure newlines are converted to <br> tags
-    text = text.replace("\n", "<br>")
-    
-    return text.strip()
-
-
-# Load environment variables
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
 load_dotenv()
 
-# Retrieve API keys
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "").strip()
+if not GOOGLE_API_KEY:
+    raise SystemExit(
+        "GOOGLE_API_KEY is not set. Add it to ML/CHATBOT/law/.env "
+        "(get a free key at https://aistudio.google.com/apikey)."
+    )
 
-# Ensure API keys are set
-if not PINECONE_API_KEY:
-    raise ValueError("Missing PINECONE_API_KEY. Please set it in your .env file.")
-if not GROQ_API_KEY:
-    raise ValueError("Missing GROQ_API_KEY. Please set it in your .env file.")
+BASE_DIR = Path(__file__).resolve().parent
+INDEX_DIR = BASE_DIR / "faiss_index"
+TOP_K = 6
+LLM_MODEL = "gemini-2.5-flash"
 
-os.environ["PINECONE_API_KEY"] = PINECONE_API_KEY
+# Allowed frontend origins (comma-separated). Default keeps the Vite dev server.
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get(
+        "ALLOWED_ORIGINS",
+        "http://localhost:5100,http://127.0.0.1:5100",
+    ).split(",")
+    if origin.strip()
+]
 
-# Initialize Flask app
+
+# ---------------------------------------------------------------------------
+# Flask app + CORS
+# ---------------------------------------------------------------------------
 app = Flask(__name__)
-app.secret_key = os.urandom(24)  # For session management
-CORS(app, supports_credentials=True)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY") or os.urandom(24)
+CORS(app, origins=ALLOWED_ORIGINS, supports_credentials=True)
 
-# Store chat histories in memory (per session)
-chat_histories = {}
+
+# ---------------------------------------------------------------------------
+# RAG components: embeddings + FAISS retriever + Gemini LLM
+# ---------------------------------------------------------------------------
+print("[BOT] Loading Gemini embeddings (text-embedding-004)...")
+embeddings = get_gemini_embeddings()
+print("[OK] Embeddings ready")
+
+retriever = None
+if INDEX_DIR.exists() and any(INDEX_DIR.iterdir()):
+    print(f"[CONNECT] Loading FAISS index from {INDEX_DIR}...")
+    try:
+        vectorstore = FAISS.load_local(
+            str(INDEX_DIR),
+            embeddings,
+            allow_dangerous_deserialization=True,
+        )
+        retriever = vectorstore.as_retriever(
+            search_type="similarity",
+            search_kwargs={"k": TOP_K},
+        )
+        print("[OK] FAISS retriever ready")
+    except Exception as exc:
+        print(f"[WARN] Failed to load FAISS index: {exc}")
+        retriever = None
+else:
+    print(
+        f"[WARN] No FAISS index found at {INDEX_DIR}. "
+        "RAG context will be empty until you add PDFs to Data/ and run store_index.py."
+    )
+
+print(f"[BRAIN] Initializing Gemini LLM ({LLM_MODEL})...")
+llm = ChatGoogleGenerativeAI(
+    model=LLM_MODEL,
+    google_api_key=GOOGLE_API_KEY,
+    temperature=0.3,
+)
+print("[OK] LLM ready")
+
+
+# ---------------------------------------------------------------------------
+# Prompt
+# ---------------------------------------------------------------------------
+SYSTEM_PROMPT = """You are NyaySetu, a friendly AI Legal Assistant for Indian law.
+Speak clearly and helpfully, like you're chatting with a friend - not a courtroom judge.
+
+Your job:
+1. Identify the relevant section(s) or act(s) (e.g. IPC, BNS, CrPC, CPC, Consumer Protection Act) the user can file under.
+2. Explain those sections using the "Context from legal documents" below whenever possible.
+
+How to answer:
+- Applicable section(s): Clearly state the section / act. If the context mentions specific sections, use those.
+- What the section says: Paraphrase or quote from the context. If the context does not contain the section text, say so and suggest the user consult the bare act or a lawyer.
+- In simple words: 1-2 lines in everyday language explaining what it means for the user.
+- Next steps: Suggest consulting a lawyer and where to find the full bare act (e.g. Indian Kanoon).
+
+Rules:
+- Use ONLY information from the context for section text. NEVER make up section numbers or invent text.
+- Never give direct legal advice (e.g. "you will win"). Always recommend speaking to a qualified advocate.
+- Use the chat history to remember details the user has already shared.
+
+Context from legal documents:
+{context}
+
+Chat history:
+{chat_history}
+
+User question: {question}
+
+Your response:"""
+
+prompt = ChatPromptTemplate.from_template(SYSTEM_PROMPT)
+
+
+# ---------------------------------------------------------------------------
+# Per-session chat history (in-memory)
+# ---------------------------------------------------------------------------
+chat_histories: Dict[str, BaseChatMessageHistory] = {}
+
 
 def get_session_history(session_id: str) -> BaseChatMessageHistory:
-    """Get or create chat history for a session"""
     if session_id not in chat_histories:
         chat_histories[session_id] = ChatMessageHistory()
     return chat_histories[session_id]
 
 
-# Load embeddings
-print("[BOT] Loading embeddings model...")
-embeddings = download_hugging_face_embeddings()
-print("[OK] Embeddings loaded")
-
-index_name = "lawbot2"
-
-# Connect to the existing Pinecone index
-print("[CONNECT] Connecting to Pinecone...")
-docsearch = PineconeVectorStore.from_existing_index(
-    index_name=index_name,
-    embedding=embeddings
-)
-print("[OK] Connected to Pinecone")
-
-retriever = docsearch.as_retriever(search_type="similarity", search_kwargs={"k": 6})
-
-# Initialize LLM model
-print("[BRAIN] Initializing Groq LLM...")
-llm = ChatGroq(
-    groq_api_key=GROQ_API_KEY,
-    model_name="llama-3.3-70b-versatile",
-    temperature=0.3
-)
-print("[OK] LLM initialized")
-
-# Custom system prompt
-system_prompt = """You're LawBot, a friendly AI helping people understand Indian legal cases in simple, modern English. 
-Speak clearly, be helpful, and sound like you're chatting with a friend—not a courtroom judge.
-
-System Role:
-You are LawBot, a helpful AI that explains Indian legal issues and tells users under which sections they can file a case. You are not a lawyer and cannot give legal advice. Your job is to (1) identify relevant sections (e.g. IPC, CrPC, or other acts) for filing a case, and (2) explain those sections using ONLY the context from the legal documents provided below.
-
-When the user describes a situation or asks "where can I file a case" or "which section applies":
-
-1. **Applicable section(s):** Clearly state under which section(s) or act they can file a case (e.g. IPC Section 420, Section 378, CrPC, Consumer Protection Act, etc.). If the context mentions specific sections, use those. If multiple sections may apply, list them with a short reason.
-
-2. **What the section says:** Explain what that section/act says using ONLY the text from "Context from legal documents" below. Quote or paraphrase from the context. Do not invent section text—if the context does not contain the section text, say "The provided documents do not contain the full text of this section; consult the bare act or a lawyer for exact wording."
-
-3. **In simple words:** In 1–2 lines, explain in simple language what it means for the user (e.g. what the offence is, what the court can do).
-
-4. **Next steps:** Suggest they consult a lawyer for filing and procedure, and mention they can refer to Indian Kanoon or official bare acts for full section text.
-
-Tone and Language:
-- Be friendly, supportive, and respectful. Use everyday language; explain legal terms simply.
-- Structure your reply with clear headings or numbers: Applicable section(s), What the section says, In simple words, Next steps.
-
-Important Rules:
-- NEVER make up or guess section numbers or section text. Use ONLY what is in the "Context from legal documents" below.
-- If the context does not mention any relevant section for the user's situation, say so and suggest they share more details or consult a lawyer with their documents.
-- Never give direct legal advice (e.g. "you will win"). Always suggest speaking to a real lawyer for legal action.
-
-Context from legal documents (use this to find sections and explain them):
-{context}
-
-Chat History:
-{chat_history}
-
-User Question: {question}
-
-Your Response:"""
-
-# Create prompt template
-prompt = ChatPromptTemplate.from_template(system_prompt)
+def format_chat_history(messages: List) -> str:
+    formatted = []
+    for msg in messages:
+        if hasattr(msg, "type"):
+            role = "Human" if msg.type == "human" else "AI"
+            formatted.append(f"{role}: {msg.content}")
+    return "\n".join(formatted[-6:])  # last 3 exchanges
 
 
-def get_context_from_retriever(question):
-    """Retrieve relevant context from Pinecone"""
+def retrieve_context(question: str) -> str:
+    if retriever is None:
+        return ""
     try:
         docs = retriever.invoke(question)
-        context = "\n\n".join([doc.page_content for doc in docs])
-        return context
-    except Exception as e:
-        print(f"[ERROR] Error retrieving context: {str(e)}")
+        return "\n\n".join(doc.page_content for doc in docs)
+    except Exception as exc:
+        print(f"[ERROR] Retrieval failed: {exc}")
         return ""
 
 
-def format_chat_history(messages):
-    """Format chat history for the prompt"""
-    formatted = []
-    for msg in messages:
-        if hasattr(msg, 'type'):
-            role = "Human" if msg.type == "human" else "AI"
-            formatted.append(f"{role}: {msg.content}")
-    return "\n".join(formatted[-6:])  # Keep last 6 messages (3 exchanges)
+def format_for_html(text: str) -> str:
+    """Light formatting so the existing React UI renders nicely."""
+    text = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", text)
+    text = text.replace("\n", "<br>")
+    return text.strip()
 
 
-print("[OK] Chat system ready!")
-
-
+# ---------------------------------------------------------------------------
 # Routes
-@app.route("/chat")
-def index():
-    """Render chat interface"""
-    # Create a new session ID if not exists
-    if 'session_id' not in session:
-        session['session_id'] = str(datetime.now().timestamp())
-    return render_template('chat.html')
-
-
-@app.route("/get", methods=["POST"])
+# ---------------------------------------------------------------------------
+@app.route("/api/chat", methods=["POST"])
 def chat():
-    """Handle chat messages"""
-    data = request.json
-    msg = data.get("msg", "").strip()
-
+    data = request.get_json(silent=True) or {}
+    msg = (data.get("msg") or "").strip()
     if not msg:
-        return jsonify({"error": "No input received."}), 400
+        return jsonify({"error": "Message is required."}), 400
 
-    # Get or create session ID
-    session_id = session.get('session_id', str(datetime.now().timestamp()))
-    session['session_id'] = session_id
+    session_id = session.get("session_id")
+    if not session_id:
+        session_id = str(datetime.now().timestamp())
+        session["session_id"] = session_id
 
     try:
-        # Get chat history for this session
         history = get_session_history(session_id)
-        
-        # Get relevant context from Pinecone
-        context = get_context_from_retriever(msg)
-        
-        # Format chat history
+        context = retrieve_context(msg)
         chat_history_text = format_chat_history(history.messages)
-        
-        # Create the prompt
+
         formatted_prompt = prompt.format(
-            context=context,
+            context=context if context else "(no documents indexed)",
             chat_history=chat_history_text,
-            question=msg
+            question=msg,
         )
-        
-        # Get response from LLM
+
         response = llm.invoke(formatted_prompt)
-        bot_answer = response.content
-        
-        # Add to chat history
+        answer = response.content if hasattr(response, "content") else str(response)
+
         history.add_user_message(msg)
-        history.add_ai_message(bot_answer)
-        
-        # Format response for display
-        formatted_response = bot_answer.replace("\n", "<br>")
+        history.add_ai_message(answer)
 
-        return jsonify({"response": formatted_response})
-    
-    except Exception as e:
-        print(f"❌ Error processing request: {str(e)}")
+        return jsonify({"response": format_for_html(answer)})
+
+    except Exception as exc:
+        print(f"[ERROR] Chat request failed: {exc}")
         import traceback
+
         traceback.print_exc()
-        return jsonify({"error": "Failed to process request. Please try again."}), 500
+        msg_lower = str(exc).lower()
+        if "api_key" in msg_lower or "permission" in msg_lower or "401" in msg_lower or "403" in msg_lower:
+            user_msg = (
+                "Invalid or restricted Gemini API key. Check your key at "
+                "https://aistudio.google.com/apikey and ensure the Generative Language API is enabled."
+            )
+        elif "quota" in msg_lower or "429" in msg_lower:
+            user_msg = "API quota exceeded. Please try again later."
+        else:
+            user_msg = "The AI Legal Assistant is temporarily unavailable. Please try again later."
+        return (
+            jsonify({"response": user_msg, "error": True, "serviceUnavailable": True}),
+            500,
+        )
 
 
-@app.route("/chat_history", methods=["GET"])
-def chat_history():
-    """Retrieve conversation history"""
+@app.route("/api/chat/health", methods=["GET"])
+def chat_health():
+    return jsonify(
+        {
+            "status": "OK",
+            "message": "NyaySetu RAG chatbot is running",
+            "model": LLM_MODEL,
+            "embeddings": "text-embedding-004",
+            "vector_store": "FAISS (local)",
+            "rag_enabled": retriever is not None,
+            "active_sessions": len(chat_histories),
+        }
+    )
+
+
+@app.route("/api/chat/diagnose", methods=["GET"])
+def chat_diagnose():
+    key_preview = f"{GOOGLE_API_KEY[:8]}...{GOOGLE_API_KEY[-4:]}"
     try:
-        session_id = session.get('session_id')
-        if not session_id:
-            return jsonify({"history": []})
-        
-        history = get_session_history(session_id)
-        
-        # Format messages
-        messages = []
-        for msg in history.messages:
-            messages.append({
-                "type": msg.type,
-                "content": msg.content
-            })
-        
-        return jsonify({"history": messages})
-    
-    except Exception as e:
-        print(f"❌ Error retrieving history: {str(e)}")
-        return jsonify({"error": "Failed to retrieve chat history"}), 500
+        result = llm.invoke("Reply with one word: OK")
+        text = result.content if hasattr(result, "content") else str(result)
+        return jsonify(
+            {
+                "ok": True,
+                "keyPreview": key_preview,
+                "reply": text.strip(),
+                "rag_enabled": retriever is not None,
+            }
+        )
+    except Exception as exc:
+        return jsonify(
+            {
+                "ok": False,
+                "keyPreview": key_preview,
+                "error": str(exc),
+                "hint": "Fix the Gemini error above, then restart the backend.",
+            }
+        )
 
 
-@app.route("/chat/clear", methods=["POST"])
+@app.route("/api/chat/ping", methods=["GET"])
+@app.route("/api/health", methods=["GET"])
+def ping():
+    return jsonify({"ok": True, "message": "NyaySetu backend is reachable"})
+
+
+@app.route("/api/chat/clear", methods=["POST"])
 def clear_chat():
-    """Clear chat history for current session"""
-    try:
-        session_id = session.get('session_id')
-        if session_id and session_id in chat_histories:
-            del chat_histories[session_id]
-            session['session_id'] = str(datetime.now().timestamp())
-        
-        return jsonify({"message": "Chat history cleared"})
-    
-    except Exception as e:
-        print(f"[ERROR] Error clearing history: {str(e)}")
-        return jsonify({"error": "Failed to clear history"}), 500
+    session_id = session.get("session_id")
+    if session_id and session_id in chat_histories:
+        del chat_histories[session_id]
+        session["session_id"] = str(datetime.now().timestamp())
+    return jsonify({"message": "Chat history cleared"})
 
 
-@app.route("/health", methods=["GET"])
-def health():
-    """Health check endpoint"""
-    return jsonify({
-        "status": "OK",
-        "message": "LawBot chatbot service is running",
-        "model": "llama-3.3-70b-versatile",
-        "index": index_name,
-        "active_sessions": len(chat_histories)
-    })
+@app.route("/", methods=["GET"])
+def root():
+    return jsonify({"status": "OK", "message": "NyaySetu RAG Chatbot API"})
 
 
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 7860))
-    print("\n[START] Starting LawBot Flask server...")
-    print(f"[URL] Server URL: http://localhost:{port}")
-    print(f"[CHAT] Chat interface: http://localhost:{port}/chat")
-    print(f"[HEALTH] Health check: http://localhost:{port}/health")
-    print("\n[READY] Ready to help with legal queries!\n")
-    
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5001))
+    print("\n[START] Starting NyaySetu RAG backend...")
+    print(f"[URL] http://localhost:{port}")
+    print(f"[HEALTH] http://localhost:{port}/api/chat/health")
+    print(f"[DIAGNOSE] http://localhost:{port}/api/chat/diagnose")
+    print()
     app.run(host="0.0.0.0", port=port, debug=False)

@@ -12,6 +12,7 @@ export default defineConfig({
   server: {
     port: 5100,
     proxy: {
+      // Forward /api/* to the Flask RAG backend (ML/CHATBOT/law/app.py)
       '/api': {
         target: 'http://localhost:5001',
         changeOrigin: true,
@@ -24,8 +25,7 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
-          'firebase-vendor': ['firebase/app', 'firebase/auth', 'firebase/firestore'],
+          'react-vendor': ['react', 'react-dom'],
         },
       },
     },

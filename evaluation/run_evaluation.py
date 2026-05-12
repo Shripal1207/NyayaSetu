@@ -1,15 +1,18 @@
 import csv
 import json
+import os
 import re
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import requests
 
-
-API_URL = "http://localhost:5001/api/chat"
+# Backend chat: POST JSON {"msg": "..."} — default targets ML/CHATBOT/law/app.py on port 5001.
+API_URL = os.environ.get("EVAL_API_URL", "http://127.0.0.1:5001/api/chat")
 OUTPUT_DIR = Path(__file__).resolve().parent
+EVAL_TOP_K = 5
 
 TEST_QUERIES = [
     {
@@ -74,18 +77,24 @@ TEST_QUERIES = [
     },
 ]
 
+# Default: first 5 queries only (reduces API usage). Set EVAL_MAX_QUERIES=10 for all tests.
+EVAL_MAX_QUERIES = max(
+    1,
+    min(len(TEST_QUERIES), int(os.environ.get("EVAL_MAX_QUERIES", "5"))),
+)
+
 
 def clean_text(text: str) -> str:
-    return re.sub(r"<br\\s*/?>", "\n", text or "", flags=re.I).strip()
+    return re.sub(r"<br\s*/?>", "\n", text or "", flags=re.I).strip()
 
 
 def contains_section_reference(text: str) -> bool:
-    pattern = r"(section\\s+\\d+|ipc|crpc|cpc|bns|bnss|consumer protection act|it act)"
+    pattern = r"(section\s+\d+|ipc|crpc|cpc|bns|bnss|consumer protection act|it act)"
     return bool(re.search(pattern, text, flags=re.I))
 
 
 def contains_lawyer_disclaimer(text: str) -> bool:
-    return bool(re.search(r"(consult\\s+a\\s+lawyer|advocate|legal advice)", text, flags=re.I))
+    return bool(re.search(r"(consult\s+a\s+lawyer|advocate|legal advice)", text, flags=re.I))
 
 
 def keyword_score(text: str, expected_keywords: list[str]) -> float:
@@ -94,11 +103,45 @@ def keyword_score(text: str, expected_keywords: list[str]) -> float:
     return hits / max(1, len(expected_keywords))
 
 
+def keyword_prf_at_k(text: str, expected_keywords: list[str], k: int = EVAL_TOP_K) -> tuple[float, float, float]:
+    """
+    Lightweight QA alignment scores vs. gold keywords (not classic IR over retrieved docs).
+    Precision@k: hits among the first k gold keywords / k (or shorter list).
+    Recall@k: same hits / len(full gold list).
+    """
+    text_low = text.lower()
+    gold = expected_keywords
+    if not gold:
+        return 0.0, 0.0, 0.0
+    top = gold[:k]
+    matched_top = sum(1 for kw in top if kw.lower() in text_low)
+    precision = matched_top / len(top)
+    recall = matched_top / len(gold)
+    if precision + recall < 1e-12:
+        f1 = 0.0
+    else:
+        f1 = 2 * precision * recall / (precision + recall)
+    return precision, recall, f1
+
+
+def hallucination_heuristic(keyword_score_val: float, section_ref: bool) -> float:
+    """Higher = more suspected grounding gap (heuristic only; not a clinical hallucination benchmark)."""
+    base = 1.0 - keyword_score_val
+    if section_ref:
+        return min(1.0, base + 0.12)
+    return base * 0.88
+
+
 def run():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     rows = []
+    queries_to_run = TEST_QUERIES[:EVAL_MAX_QUERIES]
+    print(
+        f"[eval] Running {len(queries_to_run)} / {len(TEST_QUERIES)} queries "
+        f"(EVAL_MAX_QUERIES={EVAL_MAX_QUERIES})\n"
+    )
 
-    for item in TEST_QUERIES:
+    for item in queries_to_run:
         start = time.perf_counter()
         ok = True
         status_code = None
@@ -121,6 +164,8 @@ def run():
         section_ref = contains_section_reference(response_text)
         disclaimer = contains_lawyer_disclaimer(response_text)
         kscore = keyword_score(response_text, item["expected_keywords"])
+        p_k, r_k, f_k = keyword_prf_at_k(response_text, item["expected_keywords"], k=EVAL_TOP_K)
+        hall_q = hallucination_heuristic(kscore, section_ref)
 
         rows.append(
             {
@@ -133,17 +178,25 @@ def run():
                 "section_reference_present": int(section_ref),
                 "lawyer_disclaimer_present": int(disclaimer),
                 "keyword_score": round(kscore, 3),
+                "precision_at_5": round(p_k, 4),
+                "recall_at_5": round(r_k, 4),
+                "f1_at_5": round(f_k, 4),
+                "hallucination_heuristic": round(hall_q, 4),
                 "response": response_text,
                 "error": error,
             }
         )
 
-        print(f"{item['id']} | success={ok} | latency={latency_ms:.1f} ms")
+        print(
+            f"{item['id']} | success={ok} | P@{EVAL_TOP_K}={p_k:.2f} "
+            f"R@{EVAL_TOP_K}={r_k:.2f} F1@{EVAL_TOP_K}={f_k:.2f} | latency={latency_ms:.1f} ms"
+        )
 
     metrics = compute_metrics(rows)
     save_outputs(rows, metrics)
     plot_graphs(rows, metrics)
 
+    print_evaluation_snapshot(rows, metrics)
     print("\nEvaluation complete.")
     print(json.dumps(metrics, indent=2))
 
@@ -163,6 +216,11 @@ def compute_metrics(rows: list[dict]) -> dict:
         by_cat.setdefault(cat, []).append(r["keyword_score"])
     category_keyword_accuracy = {k: round(sum(v) / len(v), 3) for k, v in by_cat.items()}
 
+    mean_p5 = sum(r["precision_at_5"] for r in rows) / n if n else 0.0
+    mean_r5 = sum(r["recall_at_5"] for r in rows) / n if n else 0.0
+    mean_f5 = sum(r["f1_at_5"] for r in rows) / n if n else 0.0
+    mean_hall = sum(r["hallucination_heuristic"] for r in rows) / n if n else 0.0
+
     return {
         "total_queries": n,
         "successful_queries": success,
@@ -171,8 +229,60 @@ def compute_metrics(rows: list[dict]) -> dict:
         "section_reference_rate": round(section_rate, 3),
         "lawyer_disclaimer_rate": round(disclaimer_rate, 3),
         "mean_keyword_accuracy": round(keyword_avg, 3),
+        "precision_at_5": round(mean_p5, 4),
+        "recall_at_5": round(mean_r5, 4),
+        "f1_at_5": round(mean_f5, 4),
+        "hallucination_score_heuristic": round(mean_hall, 4),
+        "eval_note": (
+            "P@5/R@5/F1@5 are keyword-alignment proxies vs. gold lists (first 5 keywords); "
+            "not classical IR over retrieved chunks unless you wire retrieval metrics separately."
+        ),
         "category_keyword_accuracy": category_keyword_accuracy,
     }
+
+
+def print_evaluation_snapshot(rows: list[dict], metrics: dict) -> None:
+    """Paper-friendly console block for screenshots."""
+    line = "=" * 78
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    example = next((r for r in rows if r["success"]), rows[0] if rows else None)
+
+    print(f"\n{line}")
+    print(" LegalNexus - Evaluation output snapshot (system testing)")
+    print(line)
+    print(f" API endpoint     : {API_URL}")
+    print(f" Timestamp        : {ts}")
+    print(f" Queries run      : {metrics['total_queries']} (EVAL_MAX_QUERIES={EVAL_MAX_QUERIES}, suite size={len(TEST_QUERIES)})")
+    print(f" Gold keyword slots (k): {EVAL_TOP_K}")
+    print()
+    print(" NOTE: Generative /api/chat does not return ranked retrieved chunks.")
+    print('       Use Flask+RAG logs if you need literal "Retrieved documents: k" lines.')
+    print()
+
+    if example:
+        resp = example["response"] or ""
+        clip = (resp[:420] + "...") if len(resp) > 420 else resp
+        print(" --- Example query (first successful run, or first row if all failed) ---")
+        print(f" Query ID         : {example['query_id']}")
+        print(f" Query            : {example['query']}")
+        print(f" HTTP status      : {example['status_code']}")
+        print(f" Response OK      : {bool(example['success'])}")
+        print(f" Latency          : {example['latency_ms']} ms")
+        print(f" Response excerpt :\n{clip}\n")
+
+    print(" --- Aggregate metrics ---")
+    print(f" Precision@{EVAL_TOP_K} (keyword proxy): {metrics['precision_at_5']}")
+    print(f" Recall@{EVAL_TOP_K} (keyword proxy)   : {metrics['recall_at_5']}")
+    print(f" F1@{EVAL_TOP_K} (keyword proxy)       : {metrics['f1_at_5']}")
+    print(f" Hallucination score (heuristic, lower is better): {metrics['hallucination_score_heuristic']}")
+    print(f" Average latency (ms)                : {metrics['avg_latency_ms']}")
+    print(f" Availability rate                   : {metrics['availability_rate']}")
+    print(f" Section reference rate              : {metrics['section_reference_rate']}")
+    print(f" Lawyer disclaimer rate              : {metrics['lawyer_disclaimer_rate']}")
+    print(f" Mean keyword accuracy               : {metrics['mean_keyword_accuracy']}")
+    print(line)
+    print(" Caption for paper: Evaluation output generated during system testing")
+    print(line + "\n")
 
 
 def save_outputs(rows: list[dict], metrics: dict):
@@ -189,6 +299,10 @@ def save_outputs(rows: list[dict], metrics: dict):
     table_rows = [
         ("Availability Rate", "Successful responses / total queries", f"{metrics['availability_rate'] * 100:.1f}%"),
         ("Average Latency (ms)", "Mean response time across all queries", f"{metrics['avg_latency_ms']:.2f}"),
+        (f"Precision@{EVAL_TOP_K} (proxy)", "Keyword alignment vs. first k gold terms", f"{metrics['precision_at_5']}"),
+        (f"Recall@{EVAL_TOP_K} (proxy)", "Hits among top-k gold vs. full gold list", f"{metrics['recall_at_5']}"),
+        (f"F1@{EVAL_TOP_K} (proxy)", "Harmonic mean of precision/recall proxies", f"{metrics['f1_at_5']}"),
+        ("Hallucination Score (heuristic)", "Grounding gap proxy (lower is better)", f"{metrics['hallucination_score_heuristic']}"),
         ("Section Reference Rate", "Responses mentioning legal section/act", f"{metrics['section_reference_rate'] * 100:.1f}%"),
         ("Lawyer Disclaimer Rate", "Responses advising consultation with lawyer", f"{metrics['lawyer_disclaimer_rate'] * 100:.1f}%"),
         ("Mean Keyword Accuracy", "Average expected-keyword overlap", f"{metrics['mean_keyword_accuracy'] * 100:.1f}%"),

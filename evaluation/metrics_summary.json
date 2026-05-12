@@ -1,19 +1,19 @@
 {
-  "total_queries": 10,
-  "successful_queries": 10,
+  "total_queries": 5,
+  "successful_queries": 5,
   "availability_rate": 1.0,
-  "avg_latency_ms": 8538.64,
+  "avg_latency_ms": 8149.97,
   "section_reference_rate": 1.0,
   "lawyer_disclaimer_rate": 1.0,
-  "mean_keyword_accuracy": 0.862,
+  "mean_keyword_accuracy": 0.83,
+  "precision_at_5": 0.83,
+  "recall_at_5": 0.83,
+  "f1_at_5": 0.83,
+  "hallucination_score_heuristic": 0.29,
+  "eval_note": "P@5/R@5/F1@5 are keyword-alignment proxies vs. gold lists (first 5 keywords); not classical IR over retrieved chunks unless you wire retrieval metrics separately.",
   "category_keyword_accuracy": {
     "Criminal": 0.783,
     "Consumer": 1.0,
-    "Cyber": 0.8,
-    "Property": 1.0,
-    "Family": 1.0,
-    "Employment": 1.0,
-    "Defamation": 0.8,
-    "Police Procedure": 0.667
+    "Cyber": 0.8
   }
 }

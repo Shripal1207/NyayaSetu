@@ -1,6 +1,9 @@
 Metric,Definition,Value
 Availability Rate,Successful responses / total queries,100.0%
-Average Latency (ms),Mean response time across all queries,8538.64
+Average Latency (ms),Mean response time across all queries,8149.97
+Precision@5 (proxy),Keyword alignment vs. first k gold terms,0.83
+Recall@5 (proxy),Hits among top-k gold vs. full gold list,0.83
+F1@5 (proxy),Harmonic mean of precision/recall proxies,0.83
+Hallucination Score (heuristic),Grounding gap proxy (lower is better),0.29
 Section Reference Rate,Responses mentioning legal section/act,100.0%
-Lawyer Disclaimer Rate,Responses advising consultation with lawyer,100.0%
-Mean Keyword Accuracy,Average expected-keyword overlap,86.2%
+Mean Keyword Accuracy,Average expected-keyword overlap,83.0%

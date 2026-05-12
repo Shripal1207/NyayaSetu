@@ -3,9 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Send, Bot, User, Loader2, Sparkles, Trash2 } from 'lucide-react'
 import Button from '../components/ui/Button'
 import Toast from '../components/ui/Toast'
-import { useFirebase } from '../context/FirebaseContext'
-import { db } from '../context/FirebaseContext'
-import { chatbotService, saveChatToFirestore } from '../utils/api'
+import { chatbotService } from '../utils/api'
 import { formatTime } from '../utils/formatters'
 
 const ChatbotPage = () => {
@@ -15,7 +13,6 @@ const ChatbotPage = () => {
   const [toast, setToast] = useState({ show: false, message: '', type: 'info' })
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
-  const { currentUser } = useFirebase()
 
   const suggestedQuestions = [
     'What is the process for filing a consumer complaint?',
@@ -27,12 +24,6 @@ const ChatbotPage = () => {
   useEffect(() => {
     scrollToBottom()
   }, [messages])
-
-  useEffect(() => {
-    if (messages.length > 0 && currentUser) {
-      saveChatToFirestore(db, currentUser.uid, messages)
-    }
-  }, [messages, currentUser])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -65,16 +56,12 @@ const ChatbotPage = () => {
       }
 
       setMessages(prev => [...prev, botMessage])
-
-      // Only show toast for unexpected errors, not for service unavailability
-      // The message itself will inform the user about maintenance
     } catch (error) {
-      // This catch block should rarely be hit now since API handles errors gracefully
       console.error('Chat error:', error)
 
       const errorMessage = {
         id: Date.now() + 1,
-        text: '⚠️ Unable to connect to the AI Legal Assistant. The service may be temporarily unavailable. Please try again later.',
+        text: 'Unable to connect to the AI Legal Assistant. The service may be temporarily unavailable. Please try again later.',
         sender: 'bot',
         timestamp: new Date(),
         isError: true

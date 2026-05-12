@@ -1,14 +1,16 @@
-# LegalNexus Chatbot Service Deployment
+# NyaySetu RAG Backend - Render deployment
+# Deploy with `rootDir: ML/CHATBOT/law` so build/start commands run from the Flask service folder.
 
 services:
   - type: web
     name: legalnexus-chatbot
     runtime: python
+    rootDir: ML/CHATBOT/law
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --bind 0.0.0.0:$PORT app:app
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --timeout 120 app:app
     envVars:
       - key: GOOGLE_API_KEY
         sync: false
       - key: ALLOWED_ORIGINS
         sync: false
-    healthCheckPath: /health
+    healthCheckPath: /api/health

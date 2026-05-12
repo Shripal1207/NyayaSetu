@@ -1,76 +1,63 @@
-from src.helper import load_pdf_file, text_split, download_hugging_face_embeddings
-from pinecone import Pinecone, ServerlessSpec
-from langchain_pinecone import PineconeVectorStore
-from dotenv import load_dotenv
+"""
+One-time ingestion script for the RAG chatbot.
+
+Reads every PDF inside ML/CHATBOT/law/Data/, splits the text into chunks,
+embeds each chunk with Gemini text-embedding-004, and stores the resulting
+vectors in a local FAISS index at ML/CHATBOT/law/faiss_index/.
+
+Usage:
+    cd ML/CHATBOT/law
+    python store_index.py
+"""
+
 import os
-import time
+from pathlib import Path
 
-# Load environment variables
-load_dotenv()
+from dotenv import load_dotenv
+from langchain_community.vectorstores import FAISS
 
-PINECONE_API_KEY = os.environ.get('PINECONE_API_KEY')
+from src.helper import get_gemini_embeddings, load_pdf_file, text_split
 
-if not PINECONE_API_KEY:
-    raise ValueError("❌ PINECONE_API_KEY not found in .env file")
 
-# Set environment variable
-os.environ["PINECONE_API_KEY"] = PINECONE_API_KEY
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "Data"
+INDEX_DIR = BASE_DIR / "faiss_index"
 
-print("📚 Loading PDF files...")
-extracted_data = load_pdf_file(data='Data/')
-print(f"✅ Loaded {len(extracted_data)} documents")
 
-print("✂️ Splitting text into chunks...")
-text_chunks = text_split(extracted_data)
-print(f"✅ Created {len(text_chunks)} text chunks")
+def main() -> None:
+    load_dotenv()
 
-print("🤖 Downloading embeddings model...")
-embeddings = download_hugging_face_embeddings()
-print("✅ Embeddings model ready")
-
-# Initialize Pinecone client
-print("🔌 Connecting to Pinecone...")
-pc = Pinecone(api_key=PINECONE_API_KEY)
-
-index_name = "lawbot2"
-
-# Check if index exists
-existing_indexes = pc.list_indexes()
-index_names = [index.name for index in existing_indexes]
-
-if index_name not in index_names:
-    print(f"🆕 Creating new index: {index_name}")
-    pc.create_index(
-        name=index_name,
-        dimension=384,
-        metric="cosine",
-        spec=ServerlessSpec(
-            cloud="aws",
-            region="us-east-1"
+    if not os.environ.get("GOOGLE_API_KEY"):
+        raise SystemExit(
+            "GOOGLE_API_KEY is not set. Add it to ML/CHATBOT/law/.env "
+            "(get a free key at https://aistudio.google.com/apikey)."
         )
-    )
-    
-    # Wait for index to be ready
-    print("⏳ Waiting for index to initialize...")
-    time.sleep(10)
-    print("✅ Index created successfully")
-else:
-    print(f"✅ Index '{index_name}' already exists")
 
-# Store documents in Pinecone
-print("📝 Storing documents in Pinecone vector database...")
-print("⏳ This may take a few minutes...")
+    if not DATA_DIR.exists() or not any(DATA_DIR.glob("*.pdf")):
+        raise SystemExit(
+            f"No PDFs found in {DATA_DIR}. "
+            "Drop your legal PDF files there and re-run this script."
+        )
 
-try:
-    docsearch = PineconeVectorStore.from_documents(
-        documents=text_chunks,
-        embedding=embeddings,
-        index_name=index_name
-    )
-    print("✅ Documents stored successfully in Pinecone!")
-    print(f"✅ Total chunks indexed: {len(text_chunks)}")
-except Exception as e:
-    print(f"❌ Error storing documents: {str(e)}")
-    raise
+    print(f"Loading PDF files from {DATA_DIR}...")
+    extracted_data = load_pdf_file(str(DATA_DIR))
+    print(f"Loaded {len(extracted_data)} document pages")
 
-print("\n🎉 Setup complete! You can now run app.py")
+    print("Splitting text into chunks...")
+    text_chunks = text_split(extracted_data)
+    print(f"Created {len(text_chunks)} text chunks")
+
+    print("Initializing Gemini embeddings (text-embedding-004)...")
+    embeddings = get_gemini_embeddings()
+
+    print("Building FAISS index from chunks (this calls the Gemini embeddings API)...")
+    vectorstore = FAISS.from_documents(documents=text_chunks, embedding=embeddings)
+
+    INDEX_DIR.mkdir(parents=True, exist_ok=True)
+    vectorstore.save_local(str(INDEX_DIR))
+    print(f"FAISS index saved to {INDEX_DIR}")
+    print("\nSetup complete. You can now run: python app.py")
+
+
+if __name__ == "__main__":
+    main()
